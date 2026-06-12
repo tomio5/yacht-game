@@ -2,56 +2,289 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>ヨットゲーム</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ヨット（ヤッツィー）ゲーム</title>
     <style>
-        body { font-family: sans-serif; text-align: center; }
-        .dice-container { display: flex; justify-content: center; gap: 10px; margin: 20px; }
-        .die { width: 50px; height: 50px; border: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; }
-        .die.selected { background-color: #ffd700; }
-        table { margin: 0 auto; border-collapse: collapse; }
-        td, th { border: 1px solid #ccc; padding: 10px; }
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .dice-container {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .die {
+            width: 60px;
+            height: 60px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #f0f0f0;
+            user-select: none;
+        }
+        .die.selected {
+            background-color: #ffcc00;
+            border-color: #cc9900;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            margin: 5px;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+        th { background-color: #f2f2f2; }
+        td.clickable {
+            cursor: pointer;
+            background-color: #e6f3ff;
+        }
+        td.clickable:hover {
+            background-color: #cce6ff;
+        }
+        .scored {
+            background-color: #e9ecef;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>
-    <h1>ヨットゲーム</h1>
+
+<div class="container">
+    <h1>ヨット（ヤッツィー）</h1>
+    <div>ラウンド: <span id="currentRound">1</span> / 12</div>
+    <div>残りサイコロを振れる回数: <span id="rollsLeft">3</span></div>
+
     <div class="dice-container" id="diceArea"></div>
-    <button onclick="rollDice()">サイコロを振る</button>
-    <p>残り回数: <span id="rollsLeft">3</span></p>
+    <div>
+        <button id="rollButton" onclick="rollDice()">サイコロを振る</button>
+        <button onclick="resetTurn()">ダイスリセット</button>
+    </div>
 
-    <table id="scoreTable">
-        <tr><th>役</th><th>点数</th></tr>
-        <tr><td>1の目</td><td id="score1" onclick="submitScore('1')">-</td></tr>
-        <tr><td>2の目</td><td id="score2" onclick="submitScore('2')">-</td></tr>
+    <h2>スコアシート</h2>
+    <table>
+        <tr>
+            <th>役</th>
+            <th>説明</th>
+            <th>得点</th>
+        </tr>
+        <tr><td>1の目</td><td>1の目の合計</td><td id="score_1" class="clickable" onclick="selectScore('1')">-</td></tr>
+        <tr><td>2の目</td><td>2の目の合計</td><td id="score_2" class="clickable" onclick="selectScore('2')">-</td></tr>
+        <tr><td>3の目</td><td>3の目の合計</td><td id="score_3" class="clickable" onclick="selectScore('3')">-</td></tr>
+        <tr><td>4の目</td><td>4の目の合計</td><td id="score_4" class="clickable" onclick="selectScore('4')">-</td></tr>
+        <tr><td>5の目</td><td>5の目の合計</td><td id="score_5" class="clickable" onclick="selectScore('5')">-</td></tr>
+        <tr><td>6の目</td><td>6の目の合計</td><td id="score_6" class="clickable" onclick="selectScore('6')">-</td></tr>
+        <tr><td>チョイス</td><td>全ダイスの目の合計</td><td id="score_choice" class="clickable" onclick="selectScore('choice')">-</td></tr>
+        <tr><td>4カード</td><td>同じ目が4つ以上あれば全ダイスの目</td><td id="score_4ofakind" class="clickable" onclick="selectScore('4ofakind')">-</td></tr>
+        <tr><td>フルハウス</td><td>3カード + ペア（固定25点）</td><td id="score_fullhouse" class="clickable" onclick="selectScore('fullhouse')">-</td></tr>
+        <tr><td>Sストレート</td><td>4つ星以上の連続（固定15点）</td><td id="score_smallstraight" class="clickable" onclick="selectScore('smallstraight')">-</td></tr>
+        <tr><td>Lストレート</td><td>5つ連続（固定30点）</td><td id="score_largsestraight" class="clickable" onclick="selectScore('largsestraight')">-</td></tr>
+        <tr><td>ヨット</td><td>すべて同じ目（固定50点）</td><td id="score_yacht" class="clickable" onclick="selectScore('yacht')">-</td></tr>
+        <tr>
+            <th>合計点</th>
+            <th></th>
+            <th id="totalScore">0</th>
+        </tr>
     </table>
+    
+    <div id="gameOverMsg" style="display:none; margin-top:20px; font-size:24px; color:green; font-weight:bold;">
+        ゲーム終了！合計得点: <span id="finalScore"></span>
+    </div>
+</div>
 
-    <script>
-        let dice = [1, 1, 1, 1, 1];
-        let selected = [false, false, false, false, false];
-        let rollsLeft = 3;
+<script>
+    let dice = [1, 1, 1, 1, 1];
+    let selected = [false, false, false, false, false];
+    let rollsLeft = 3;
+    let round = 1;
+    let scores = {
+        '1': null, '2': null, '3': null, '4': null, '5': null, '6': null,
+        'f_one': null, 'choice': null, '4ofakind': null, 'fullhouse': null, 
+        'smallstraight': null, 'largsestraight': null, 'yacht': null
+    };
+    let isGameFinished = false;
 
-        function rollDice() {
-            if (rollsLeft <= 0) return;
-            for (let i = 0; i < 5; i++) {
-                if (!selected[i]) dice[i] = Math.floor(Math.random() * 6) + 1;
-            }
-            rollsLeft--;
-            updateDisplay();
+    // 初期化・画面更新
+    function updateDisplay() {
+        // ダイスの表示
+        const container = document.getElementById('diceArea');
+        container.innerHTML = '';
+        dice.forEach((val, i) => {
+            const d = document.createElement('div');
+            d.className = 'die' + (selected[i] ? ' selected' : '');
+            d.innerText = val;
+            d.onclick = () => toggleKeep(i);
+            container.appendChild(d);
+        });
+
+        document.getElementById('rollsLeft').innerText = rollsLeft;
+        document.getElementById('currentRound').innerText = round;
+        document.getElementById('rollButton').disabled = (rollsLeft <= 0 || isGameFinished);
+
+        // スコアシートの仮計算（未確定の場所のみリアルタイム表示）
+        updateTempScores();
+        
+        // 合計点の計算
+        let total = 0;
+        for (let key in scores) {
+            if (scores[key] !== null) total += scores[key];
         }
+        document.getElementById('totalScore').innerText = total;
+    }
 
-        function updateDisplay() {
-            const container = document.getElementById('diceArea');
-            container.innerHTML = '';
-            dice.forEach((val, i) => {
-                const d = document.createElement('div');
-                d.className = 'die' + (selected[i] ? ' selected' : '');
-                d.innerText = val;
-                d.onclick = () => { selected[i] = !selected[i]; updateDisplay(); };
-                container.appendChild(d);
-            });
-            document.getElementById('rollsLeft').innerText = rollsLeft;
+    function toggleKeep(i) {
+        // サイコロを振る前はキープできない
+        if (rollsLeft === 3 || isGameFinished) return;
+        selected[i] = !selected[i];
+        updateDisplay();
+    }
+
+    function rollDice() {
+        if (rollsLeft <= 0 || isGameFinished) return;
+        for (let i = 0; i < 5; i++) {
+            if (!selected[i]) {
+                dice[i] = Math.floor(Math.random() * 6) + 1;
+            }
+        }
+        rollsLeft--;
+        updateDisplay();
+    }
+
+    function resetTurn() {
+        if (rollsLeft === 3 || isGameFinished) return;
+        // サイコロのキープをすべて解除して振り直せる状態にする（1投目に戻るわけではない）
+        selected = [false, false, false, false, false];
+        // ダイスはそのままにキープだけ外す仕様
+        updateDisplay();
+    }
+
+    // 各役の点数を計算するヘルパー
+    function calculatePoint(category) {
+        const counts = [0, 0, 0, 0, 0, 0, 0];
+        dice.forEach(d => counts[d]++);
+
+        switch(category) {
+            case '1': return counts[1] * 1;
+            case '2': return counts[2] * 2;
+            case '3': return counts[3] * 3;
+            case '4': return counts[4] * 4;
+            case '5': return counts[5] * 5;
+            case '6': return counts[6] * 6;
+            case 'choice': 
+                return dice.reduce((a, b) => a + b, 0);
+            case '4ofakind':
+                if (counts.some(c => c >= 4)) return dice.reduce((a, b) => a + b, 0);
+                return 0;
+            case 'fullhouse':
+                let has3 = counts.includes(3);
+                let has2 = counts.includes(2);
+                let has5 = counts.includes(5); // ヨットもフルハウス扱いとするルールが多い
+                if ((has3 && has2) || has5) return 25;
+                return 0;
+            case 'smallstraight':
+                // 4連続の判定
+                let straight1 = (counts[1]>=1 && counts[2]>=1 && counts[3]>=1 && counts[4]>=1);
+                let straight2 = (counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1);
+                let straight3 = (counts[3]>=1 && counts[4]>=1 && counts[5]>=1 && counts[6]>=1);
+                if (straight1 || straight2 || straight3) return 15;
+                return 0;
+            case 'largsestraight':
+                // 5連続の判定
+                let l_straight1 = (counts[1]>=1 && counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1);
+                let l_straight2 = (counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1 && counts[6]>=1);
+                if (l_straight1 || l_straight2) return 30;
+                return 0;
+            case 'yacht':
+                if (counts.some(c => c === 5)) return 50;
+                return 0;
+            default:
+                return 0;
+        }
+    }
+
+    function updateTempScores() {
+        const categories = ['1', '2', '3', '4', '5', '6', 'choice', '4ofakind', 'fullhouse', 'smallstraight', 'largsestraight', 'yacht'];
+        categories.forEach(cat => {
+            const td = document.getElementById('score_' + cat);
+            if (scores[cat] === null) {
+                // まだスコアが確定していないなら現在のダイス状況での仮スコアを表示（0点でも表示）
+                const pt = calculatePoint(cat);
+                td.innerText = `(${pt})`;
+                td.style.color = "#888";
+            }
+        });
+    }
+
+    function selectScore(category) {
+        if (isGameFinished) return;
+        // まだサイコロを振っていないなら得点はつけられない
+        if (rollsLeft === 3) return; 
+        // すでにスコアが埋まっていたら何もしない
+        if (scores[category] !== null) return; 
+
+        // 点数を確定
+        scores[category] = calculatePoint(category);
+        
+        const td = document.getElementById('score_' + category);
+        td.innerText = scores[category];
+        td.style.color = "#000";
+        td.className = "scored";
+
+        // 次のラウンドへリセット
+        round++;
+        rollsLeft = 3;
+        dice = [1, 1, 1, 1, 1];
+        selected = [false, false, false, false, false];
+
+        if (round > 12) {
+            isGameFinished = true;
+            document.getElementById('gameOverMsg').style.display = "block";
+            let total = 0;
+            for (let key in scores) {
+                if (scores[key] !== null) total += scores[key];
+            }
+            document.getElementById('finalScore').innerText = total;
         }
 
         updateDisplay();
-    </script>
+    }
+
+    updateDisplay();
+</script>
+
 </body>
 </html>
