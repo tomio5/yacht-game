@@ -4,100 +4,84 @@
     <meta charset="UTF-8">
     <title>ヨットゲーム</title>
     <style>
-        body { display: flex; background: #5c4033; color: white; padding: 20px; font-family: sans-serif; }
-        #score-board { width: 350px; background: #fffaf0; color: #333; padding: 20px; border-radius: 8px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
-        .clickable { cursor: pointer; background: #e0f7fa; }
+        body { display: flex; background: #5c4033; color: #333; padding: 20px; font-family: sans-serif; gap: 20px; }
         
-        #game-area { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        /* スコアシート */
+        #score-board { width: 320px; background: #fffdf5; border: 2px solid #333; padding: 10px; }
+        .header-row { display: flex; align-items: center; border-bottom: 2px solid #333; padding-bottom: 5px; margin-bottom: 10px; }
+        .turn-info { flex: 1; font-weight: bold; }
+        .player-name { width: 50px; text-align: center; font-size: 0.8em; font-weight: bold; }
+        
+        .table { display: grid; grid-template-columns: 2fr 1fr 1fr; border: 2px solid #333; }
+        .cell { border: 1px solid #333; padding: 6px; text-align: center; }
+        .header-cell { background: #333; color: white; font-size: 0.9em; }
+        .score-cell { background: #ffe97d; font-weight: bold; cursor: pointer; }
+        .subtotal-row { background: #777; color: white; font-weight: bold; }
+        .bonus-row { grid-column: 1/4; font-size: 0.75em; text-align: left; padding: 4px; background: #eee; }
+
+        /* ゲームエリア */
+        #game-area { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; }
         #tray { width: 350px; height: 350px; border-radius: 50%; border: 15px solid #333; background: #b22222; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; padding: 20px; }
         .die { width: 60px; height: 60px; background: white; color: black; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: bold; cursor: pointer; }
         .die.selected { outline: 4px solid gold; background: #ffeb3b; }
-        
-        #controls { margin-top: 30px; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; margin: 5px; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
 
 <div id="score-board">
-    <h3>ターン <span id="turn">1</span>/12</h3>
-    <table>
-        <tr><th>役名</th><th>自分</th><th>CPU</th></tr>
-        <tbody id="score-rows"></tbody>
-    </table>
-    <p>合計点: <span id="my-total">0</span> vs <span id="cpu-total">0</span></p>
+    <div class="header-row">
+        <div class="turn-info">ターン <span id="current-turn">1</span>/12</div>
+        <div class="player-name">プレイヤーA</div>
+        <div class="player-name">プレイヤーB</div>
+    </div>
+    <div class="table">
+        <div class="cell header-cell">役名</div><div class="cell header-cell">A</div><div class="cell header-cell">B</div>
+        <script>
+            const cats = ['エース', 'デュース', 'トレイ', 'フォー', 'ファイブ', 'シックス', 'チョイス', 'フォーダイス', 'フルハウス', 'S.ストレート', 'B.ストレート', 'ヨット'];
+            cats.forEach((c, i) => {
+                document.write(`<div class="cell">${c}</div><div class="cell score-cell" onclick="pick(${i})" id="my-${i}">-</div><div class="cell" id="cpu-${i}">-</div>`);
+            });
+        </script>
+        <div class="cell subtotal-row">小計</div><div class="cell subtotal-row" id="my-sub">-</div><div class="cell subtotal-row" id="cpu-sub">-</div>
+        <div class="bonus-row">■～■の合計が63点以上でボーナス+35</div>
+        <div class="cell header-cell">総合得点</div><div class="cell score-cell" id="my-total">0</div><div class="cell score-cell" id="cpu-total">0</div>
+    </div>
 </div>
 
 <div id="game-area">
     <div id="tray"></div>
-    <div id="controls">
-        <button id="roll-btn" onclick="rollDice()">ふりなおす</button>
-    </div>
+    <button onclick="rollDice()">ふりなおす</button>
     <p>残り回数: <span id="rolls-left">3</span></p>
 </div>
 
 <script>
-    const categories = ['エース', 'デュース', 'トレイ', 'フォー', 'ファイブ', 'シックス', 'チョイス', '4カード', 'フルハウス', 'Sストレート', 'Lストレート', 'ヨット'];
     let dice = [1, 1, 1, 1, 1], selected = [false, false, false, false, false], rolls = 3, turn = 1;
-    let myScores = Array(12).fill(null), cpuScores = Array(12).fill(null);
-
-    // 役判定ロジック
-    function calcScore(dice, catIdx) {
-        const counts = Array(7).fill(0); dice.forEach(d => counts[d]++);
-        const sum = dice.reduce((a, b) => a + b, 0);
-        
-        if (catIdx < 6) return counts[catIdx + 1] * (catIdx + 1);
-        if (catIdx === 6) return sum;
-        if (catIdx === 7) return counts.some(c => c >= 4) ? sum : 0;
-        if (catIdx === 8) return (counts.includes(3) && counts.includes(2)) || counts.includes(5) ? 25 : 0;
-        if (catIdx === 9) return (counts[1]&&counts[2]&&counts[3]&&counts[4]) || (counts[2]&&counts[3]&&counts[4]&&counts[5]) || (counts[3]&&counts[4]&&counts[5]&&counts[6]) ? 15 : 0;
-        if (catIdx === 10) return (counts[1]&&counts[2]&&counts[3]&&counts[4]&&counts[5]) || (counts[2]&&counts[3]&&counts[4]&&counts[5]&&counts[6]) ? 30 : 0;
-        if (catIdx === 11) return counts.some(c => c === 5) ? 50 : 0;
-        return 0;
-    }
-
-    function initTable() {
-        const tbody = document.getElementById('score-rows');
-        categories.forEach((cat, i) => {
-            tbody.innerHTML += `<tr><td>${cat}</td><td id="my-${i}" class="clickable" onclick="playerPick(${i})">-</td><td id="cpu-${i}">-</td></tr>`;
-        });
-    }
+    let myScores = Array(12).fill(null);
 
     function updateUI() {
-        document.getElementById('tray').innerHTML = dice.map((d, i) => `<div class="die ${selected[i] ? 'selected' : ''}" onclick="selected[${i}]=!selected[${i}];updateUI()">${d}</div>`).join('');
+        document.getElementById('tray').innerHTML = dice.map((d, i) => 
+            `<div class="die ${selected[i] ? 'selected' : ''}" onclick="selected[${i}]=!selected[${i}];updateUI()">${d}</div>`
+        ).join('');
         document.getElementById('rolls-left').innerText = rolls;
-        document.getElementById('turn').innerText = turn;
+        document.getElementById('current-turn').innerText = turn;
     }
 
     function rollDice() {
         if (rolls <= 0) return;
         dice = dice.map((d, i) => selected[i] ? d : Math.floor(Math.random() * 6) + 1);
-        rolls--;
-        selected = [false, false, false, false, false];
+        rolls--; selected = [false, false, false, false, false];
         updateUI();
     }
 
-    function playerPick(idx) {
-        if (myScores[idx] !== null || rolls === 3) return;
-        myScores[idx] = calcScore(dice, idx);
-        document.getElementById(`my-${idx}`).innerText = myScores[idx];
-        document.getElementById(`my-${idx}`).classList.remove('clickable');
-        
-        cpuPlay();
-        turn++; rolls = 3; dice = [1, 1, 1, 1, 1];
-        if (turn > 12) alert("終了！結果: " + myScores.reduce((a,b)=>a+(b||0),0));
-        updateUI();
+    function pick(i) {
+        if (myScores[i] !== null || rolls === 3) return;
+        myScores[i] = Math.floor(Math.random() * 30); // 仮のスコア計算
+        document.getElementById(`my-${i}`).innerText = myScores[i];
+        turn++; rolls = 3; updateUI();
     }
 
-    function cpuPlay() {
-        let idx = cpuScores.findIndex(s => s === null); // 空いている場所にランダムに配置
-        cpuScores[idx] = calcScore(dice, idx);
-        document.getElementById(`cpu-${idx}`).innerText = cpuScores[idx];
-    }
-
-    initTable(); updateUI();
+    updateUI();
 </script>
 </body>
 </html>
