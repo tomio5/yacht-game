@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ヨットゲーム</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; }
+        .dice-container { display: flex; justify-content: center; gap: 10px; margin: 20px; }
+        .die { width: 50px; height: 50px; border: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; }
+        .die.selected { background-color: #ffd700; }
+        table { margin: 0 auto; border-collapse: collapse; }
+        td, th { border: 1px solid #ccc; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>ヨットゲーム</h1>
+    <div class="dice-container" id="diceArea"></div>
+    <button onclick="rollDice()">サイコロを振る</button>
+    <p>残り回数: <span id="rollsLeft">3</span></p>
+
+    <table id="scoreTable">
+        <tr><th>役</th><th>点数</th></tr>
+        <tr><td>1の目</td><td id="score1" onclick="submitScore('1')">-</td></tr>
+        <tr><td>2の目</td><td id="score2" onclick="submitScore('2')">-</td></tr>
+    </table>
+
+    <script>
+        let dice = [1, 1, 1, 1, 1];
+        let selected = [false, false, false, false, false];
+        let rollsLeft = 3;
+
+        function rollDice() {
+            if (rollsLeft <= 0) return;
+            for (let i = 0; i < 5; i++) {
+                if (!selected[i]) dice[i] = Math.floor(Math.random() * 6) + 1;
+            }
+            rollsLeft--;
+            updateDisplay();
+        }
+
+        function updateDisplay() {
+            const container = document.getElementById('diceArea');
+            container.innerHTML = '';
+            dice.forEach((val, i) => {
+                const d = document.createElement('div');
+                d.className = 'die' + (selected[i] ? ' selected' : '');
+                d.innerText = val;
+                d.onclick = () => { selected[i] = !selected[i]; updateDisplay(); };
+                container.appendChild(d);
+            });
+            document.getElementById('rollsLeft').innerText = rollsLeft;
+        }
+
+        updateDisplay();
+    </script>
+</body>
+</html>
