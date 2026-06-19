@@ -2048,8 +2048,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         swapColumns={netMode?.role === 'guest'}
       />
 
-      {/* ── 振るボタンパネル（デバッグパネルなしでも操作できるよう暫定UI） ── */}
-      <div style={{
+      {/* ── 振るボタンパネル（dev環境のみ表示） ── */}
+      {import.meta.env.DEV && <div style={{
         position: 'absolute', top: 60, left: 262,
         display: 'flex', flexDirection: 'column', gap: 6,
         background: 'rgba(0,0,0,0.72)', borderRadius: 8,
@@ -2101,7 +2101,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
             ))}
           </>
         )}
-      </div>
+      </div>}
 
       {/* ── ターン表示 (中央上) ── */}
       <div style={{
@@ -2119,8 +2119,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         )}
       </div>
 
-      {/* ── デバッグパネル ── */}
-      <DebugPanel
+      {/* ── デバッグパネル（dev環境のみ表示） ── */}
+      {import.meta.env.DEV && <DebugPanel
         disabled={isDisabled || phase !== 'idle' || turn !== 'player'}
         result={lastResult}
         onRoll={netMode?.role === 'guest'
@@ -2175,7 +2175,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           slashBArmedRef.current = v
           setSlashBArmedUI(v)
         }}
-      />
+      />}
 
       {/* ── メインUI ── */}
       <div style={{
