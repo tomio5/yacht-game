@@ -8,10 +8,7 @@
 
 import { useState } from 'react'
 import { calcCategoryScore, calcUpperSum, calcUpperBonus, calcTotalScore } from '../game/scoring'
-import {
-  resumeAudio, setSEEnabled, setBGMEnabled, setMasterVolume,
-  isSEEnabled, isBGMEnabled, getMasterVolume,
-} from '../game/audio'
+import { resumeAudio, setMasterVolume, getMasterVolume } from '../game/audio'
 import type { Category, DieValue, ScoreSheet as ScoreSheetType } from '../game/types'
 
 // ── アバター ──
@@ -110,15 +107,7 @@ function DieBadge({ n }: { n: string }) {
 
 // ── 音設定（スコアシート下段） ──
 function AudioControls() {
-  const [seOn,  setSeOn]  = useState(isSEEnabled())
-  const [bgmOn, setBgmOn] = useState(isBGMEnabled())
-  const [vol,   setVol]   = useState(Math.round(getMasterVolume() * 100))
-
-  const btn = (on: boolean): React.CSSProperties => ({
-    flex: 1, padding: '5px 0', borderRadius: 6, cursor: 'pointer',
-    border: 'none', fontSize: 11, fontFamily: 'monospace', fontWeight: 'bold',
-    background: on ? '#2d6a2d' : '#5a4a36', color: on ? '#fff' : '#d8c8b4',
-  })
+  const [vol, setVol] = useState(Math.round(getMasterVolume() * 100))
 
   return (
     <div style={{
@@ -127,16 +116,6 @@ function AudioControls() {
       borderTop: `2px solid ${CBORDER}`,
     }}>
       <div style={{ fontSize: 8, letterSpacing: 1, color: '#a07850', fontWeight: 'bold' }}>♪ サウンド</div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button style={btn(seOn)}
-          onClick={() => { resumeAudio(); const v = !seOn; setSeOn(v); setSEEnabled(v) }}>
-          {seOn ? '🔊 SE ON' : '🔇 SE OFF'}
-        </button>
-        <button style={btn(bgmOn)}
-          onClick={() => { resumeAudio(); const v = !bgmOn; setBgmOn(v); setBGMEnabled(v) }}>
-          {bgmOn ? '🎵 BGM ON' : '🔇 BGM OFF'}
-        </button>
-      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontSize: 12 }}>🔈</span>
         <input

@@ -2216,7 +2216,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
                 🎲 振る
               </button>
             )}
-            {phase === 'rolling' && (
+            {import.meta.env.DEV && phase === 'rolling' && (
               <span style={{ opacity: 0.6 }}>サイコロが転がり中...</span>
             )}
             {phase === 'cup_ready' && (
@@ -2224,20 +2224,22 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
                 カップをホールドして振る！
               </span>
             )}
-            {phase === 'pre_gather_cover' && (
+            {import.meta.env.DEV && phase === 'pre_gather_cover' && (
               <span>✨ カップが被せています...</span>
             )}
-            {phase === 'gathering' && (
+            {import.meta.env.DEV && phase === 'gathering' && (
               <span>✨ ダイスをまとめています...</span>
             )}
-            {phase === 'staging' && (
+            {import.meta.env.DEV && phase === 'staging' && (
               <span>✨ カップ演出中...</span>
             )}
             {phase === 'keep_select' && (
               <>
-                <div style={{ fontSize: 13, color: '#ddd' }}>
-                  確定目: {allFinals.join(' · ')}
-                </div>
+                {import.meta.env.DEV && (
+                  <div style={{ fontSize: 13, color: '#ddd' }}>
+                    確定目: {allFinals.join(' · ')}
+                  </div>
+                )}
                 {netMode && !netMode.isMyTurn() ? (
                   <div style={{ fontSize: 12, color: '#888' }}>相手のターン（観戦中）</div>
                 ) : rollsLeft > 0 ? (
