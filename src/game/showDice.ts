@@ -15,7 +15,8 @@
 
 import type { DieValue, EffectMode } from './types'
 import { getBestScoringRole, getDisplayRank, rankIndex } from './scoring'
-import type { DisplayRank, ScoringRole, RunDie } from './scoring'
+import type { DisplayRank } from './types'
+import type { ScoringRole, RunDie } from './scoring'
 
 export interface ShowDiceResult {
   showValues:  DieValue[]   // 最初にフィールドに見せる目

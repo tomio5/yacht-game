@@ -149,7 +149,7 @@ export interface FieldDieHandle {
    * 「元の集約スポット・value の面が真上」へ kinematic 補間で戻して onDone。目は物理任せにせず
    * 最後に回転で強制セット（finalValue は先に確定の原則を維持）。
    */
-  thunder(opts: { impUp: number; impH: number; torque: number }, value: DieValue, onDone: () => void): void
+  thunder(opts: { impUp: number; impH: number; torque: number }, value: DieValue, onStrike: (x: number, z: number) => void, onDone: () => void): void
   /** 現在の位置・姿勢(Euler)を読む。cover 後に dieStates へ確定値を書き戻すため。 */
   readPose(): { pos: [number, number, number]; rot: [number, number, number] } | null
   /** B系統演出: 4打点ジグザグ移動。pts = [start, wp0..wp3] の5点。segStarts = SE打点タイミング（秒）の5要素配列。省略時は0.44s固定。 */

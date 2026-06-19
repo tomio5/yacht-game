@@ -82,11 +82,11 @@ export function NetTestPanel() {
       borderRadius: 4, padding: 12, overflowY: 'auto',
       display: 'flex', flexDirection: 'column', gap: 4,
     },
-    badge: (color: string) => ({
-      display: 'inline-block', padding: '2px 8px', borderRadius: 4,
-      background: color, color: '#fff', fontSize: 12, marginLeft: 8,
-    }),
   }
+  const badge = (color: string): React.CSSProperties => ({
+    display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+    background: color, color: '#fff', fontSize: 12, marginLeft: 8,
+  })
 
   const statusColor = { init: '#888', ready: '#28a', connected: '#2a6', error: '#c33' }[status]
   const statusLabel = { init: '初期化中', ready: '待機中', connected: '接続済み', error: 'エラー' }[status]
@@ -97,8 +97,8 @@ export function NetTestPanel() {
     <div style={s.panel}>
       <div style={{ fontSize: 18, fontWeight: 'bold' }}>
         🔌 PeerJS 接続テスト
-        <span style={s.badge(roleColor)}>{roleLabel}</span>
-        <span style={s.badge(statusColor)}>{statusLabel}</span>
+        <span style={badge(roleColor)}>{roleLabel}</span>
+        <span style={badge(statusColor)}>{statusLabel}</span>
       </div>
 
       {errorMsg && <div style={{ color: '#f66' }}>エラー: {errorMsg}</div>}

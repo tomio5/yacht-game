@@ -49,7 +49,7 @@
 import { useState, useCallback, useRef, createRef, useEffect, useMemo } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { Physics, RigidBody, CuboidCollider, interactionGroups } from '@react-three/rapier'
-import { Group, AdditiveBlending, NormalBlending, BackSide, Vector3, Quaternion, Euler, MeshBasicMaterial, BufferGeometry, BufferAttribute } from 'three'
+import { Group, AdditiveBlending, BackSide, Vector3, Quaternion, Euler, MeshBasicMaterial, BufferGeometry, BufferAttribute } from 'three'
 import type { PointLight } from 'three'
 import { createFlameTexture } from './fireTexture'
 import { FieldDie } from './FieldDie'
@@ -525,8 +525,6 @@ const FIRE_PHASE2_DUR = 3.0    // 拡大して完全に隠す
 const FIRE_PHASE3_DUR = 1.2    // 縮小して消える
 const FIRE_COVER_AT   = 0.5    // 段階2のこの割合で「完全に隠れた」とみなし swap を1回だけ実行
 const FIRE_TIMEOUT    = FIRE_PHASE1_DUR + FIRE_PHASE2_DUR + FIRE_PHASE3_DUR + 0.5
-const FIRE_SIZE_SMALL = 1.1    // 段階1 到達サイズ
-const FIRE_SIZE_BIG   = 4.4    // 段階2 最大サイズ（ダイスを完全に覆う）
 
 // GPU パーティクル定数（火炎放射器チューニング）
 const FIRE_P_COUNT    = 150    // 常設スロット数
@@ -1189,7 +1187,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     dieRef.thunder(
       { impUp: THUNDER_IMP_UP, impH: THUNDER_IMP_H, torque: THUNDER_TORQUE },
       finals[target],                                   // 自然に上へ出したい目（=final）。誘導＆判定基準
-      (x, z) => {                                        // 雷を1発撃つ視覚（初回＋再雷ごと、現在位置に）
+      (x: number, z: number) => {                         // 雷を1発撃つ視覚（初回＋再雷ごと、現在位置に）
         thunderFireRef.current += 1
         setThunderStrike({ x, z, key: thunderFireRef.current, power: 1 })
         if (firstStrike) { firstStrike = false; playThunderA1SE() }   // 着弾と同期（1回だけ）

@@ -53,6 +53,7 @@ const COVER_LABELS: Record<CoverForce, string> = {
   thunder:    '雷',
   thunder_v2: '雷 v2',
   fire:       '炎',
+  slashB:     '斬撃B',
 }
 const RANK_COLORS: Record<DisplayRank, string> = {
   none:   '#666',
