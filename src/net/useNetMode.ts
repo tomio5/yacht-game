@@ -103,6 +103,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
       displayRank:   rank,
     }
     guestDiceFinals.current = newFinals   // スコア記入時に正しい出目を参照できるよう更新
+    guestKeptIds.current    = []          // 再振り後はキープ選択をリセット（gatherFieldDice で全員 field に戻るため）
     peerConnection.send(rollMsg)
     // ホスト自身の表示更新（相手ターンの演出観戦用）
     rollResultCbs.current.forEach(cb => cb({
