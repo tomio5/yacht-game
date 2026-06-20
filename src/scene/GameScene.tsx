@@ -1746,11 +1746,21 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
     // ホストがゲームリセットしたときゲスト側で自動リセット
     unsubs.push(netMode.onGameReset(() => {
-      handleGameReset(true)
+      setPlayerSheet({ ...EMPTY_SHEET })
+      setCpuSheet({ ...EMPTY_SHEET })
+      setGameOver(false)
+      resetForNextTurn()
+      bgm.stopAll(); bgm.playDefault()
+      setYachtActive(false)
+      onDark(0); onFlash(0)
+      gameLogRef.current = []
+      rollNoRef.current  = 0
+      roundNoRef.current = 0
+      setTurn('cpu')   // ホスト先攻 → ゲストは相手ターン待ち
     }))
 
     return () => unsubs.forEach(u => u())
-  }, [netMode, resetForNextTurn, preparePendingRoll, handleGameReset])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [netMode, resetForNextTurn, preparePendingRoll])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── ゲームリセット ──────────────────────────────
   const downloadLog = useCallback(() => {
