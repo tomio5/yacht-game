@@ -820,7 +820,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     | { type: 'record'; turn: 'player'|'cpu'; roundNo: number; category: string; points: number }
   const gameLogRef      = useRef<LogEntry[]>([])
   const gameStartedAtRef = useRef(new Date().toISOString())
-  const rollNoRef       = useRef(0)   // ターン内のロール番号（1〜3）
+  const rollNoRef           = useRef(0)   // ターン内のロール番号（1〜3）
+  const isFirstRollOfTurnRef = useRef(true)  // ターン最初の1投目かどうか（0キープ再振りの誤判定防止用）
   const roundNoRef      = useRef(0)   // ゲーム全体のラウンド番号（1〜13）
   const slashBTargetIdRef = useRef<number | null>(null) // B系統演出: 対象ダイスID
   const swapIndicesRef  = useRef<number[]>([])
@@ -992,6 +993,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     lastResultRef.current = res        // 再振りで指定値を反映するため保持
     setLastResult(res)
     rollNoRef.current = 1
+    isFirstRollOfTurnRef.current = false   // 1投目完了 → 次の onRollResult は再振り扱い
     gameLogRef.current.push({ type: 'roll', turn, rollNo: 1, finalValues: finals, displayValues: showValues, effectId: eff.effectId, displayRank: getDisplayRank(finals) })
     setRollsLeft(2)
     // ネットモード（ホスト）: ロール結果をゲストへ送信 → 両者ともカップ自動投入
@@ -1635,6 +1637,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     diceSettledRef.current = false
     stagingArmedRef.current = false
     pendingStagingRef.current = false
+    isFirstRollOfTurnRef.current = true
     setCpuThinking(false)
     setLastCpuCat(null)
   }, [])
@@ -1667,13 +1670,13 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         effectId:      r.effectId as CoverId,
         effectVariant: r.effectVariant as EffectMode,
       }
-      if (r.keptIds.length === 0) {
-        // 1投目: inject を渡してローカル抽選をスキップ
+      if (isFirstRollOfTurnRef.current) {
+        // 1投目: inject を渡してローカル抽選をスキップ（isFirstRollOfTurnRef は preparePendingRoll 内で false にセット）
         preparePendingRoll(finals, 'auto', 'auto', inject)
         // triggerAutoRoll は preparePendingRoll 内の netMode ガードで発火済み
         // 観戦側（相手ターン）の場合は重複呼び出しを避けるため何もしない
       } else {
-        // 再振り: finals + effectId を注入してから handleReRoll
+        // 再振り（キープ0を含む）: finals + effectId を注入してから handleReRoll
         // skipNotify=true: hostProcessGuestRoll が既にゲストへ roll_result を送信済みのため二重送信を防ぐ
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, finalValues: finals, displayValues: finals }
@@ -1683,11 +1686,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, effectId: inject.effectId, mode: inject.effectVariant }
         }
-        // handleReRoll はローカル抽選で swapIndices を決めるが、ホスト送信の displayValues から正しく再計算する
+        // ホスト送信の displayValues でフィールドダイスの表示を上書き（ローカル再計算と食い違い防止）
         if (pendingSpawnRef.current) {
           const hostDisplays = inject.displayValues
           pendingSpawnRef.current = {
             ...pendingSpawnRef.current,
+            states: pendingSpawnRef.current.states.map(s =>
+              s.location === 'field' ? { ...s, displayValue: hostDisplays[s.id] } : s
+            ),
             swapIndices: finals.map((f, i) => hostDisplays[i] !== f ? i : -1).filter(i => i >= 0),
           }
         }
