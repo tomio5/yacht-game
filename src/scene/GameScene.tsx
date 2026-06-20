@@ -1519,6 +1519,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── キープ: field → kept ─────────────────────────
   const handleKeep = useCallback((id: number) => {
     if (phase !== 'keep_select' || turn !== 'player') return
+    if (rollsLeft === 0) return   // 振り切り後はキープ操作不可
     if (netMode && !netMode.isMyTurn()) return
     if (maybeTriggerStaging()) return   // 最初の操作なら staging を再生（このキープは保留）
     const s = dieStatesRef.current.find(ds => ds.id === id)
@@ -1541,6 +1542,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── アンキープ: kept → field ─────────────────────
   const handleUnkeep = useCallback((id: number) => {
     if (phase !== 'keep_select' || turn !== 'player') return
+    if (rollsLeft === 0) return   // 振り切り後はアンキープ操作不可
     if (netMode && !netMode.isMyTurn()) return
     if (maybeTriggerStaging()) return   // 最初の操作なら staging を再生（この解除は保留）
     const s = dieStatesRef.current.find(ds => ds.id === id)
