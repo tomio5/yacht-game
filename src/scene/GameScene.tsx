@@ -966,11 +966,15 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       // デバッグパネルで slashB を手動装填している場合は effectId を上書き（ゲストへ正しく伝播させるため）
       if (slashBArmedRef.current) eff = { ...eff, effectId: 'slashB' }
       // ヨット成立時: 前段演出（slashB/cupHide 等）を抑制し、光の柱 staging のみに集中させる
-      if (finals.length === 5 && finals.every(v => v === finals[0])) {
+      const isYacht1 = finals.length === 5 && finals.every(v => v === finals[0])
+      if (isYacht1) {
         eff = { effectId: 'none', mode: 'none' }
         slashBArmedRef.current = false
+        // ヨット: 全ダイスがfield（1投目）→ field から1個ランダムにデコイを仕込む（光の柱で書き換えを見せる）
+        ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, 'success', []))
+      } else {
+        ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, eff.mode))
       }
-      ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, eff.mode))
     }
     const effMode = eff.mode
     const states: DieState[] = finals.map((finalValue, id) => ({
@@ -1014,7 +1018,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ・振り直す分の finalValue を新規抽選。auto=false(プレイヤー)はデバッグ指定値を反映する。
   // ・カップ内が1〜5個のいずれでもフリーズしないよう「実際に振る数(count)」で処理する。
   // auto=true(CPU) は続けて自動でカップを振る。
-  const handleReRoll = useCallback((auto = false) => {
+  const handleReRoll = useCallback((auto = false, skipNotify = false) => {
     const cur = dieStatesRef.current
     const count = cur.filter(s => s.location === 'field').length
     if (count === 0) return   // 振り直す対象なし（全キープ）→ 何もしない
@@ -1044,11 +1048,18 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // デバッグパネルで slashB 手動装填時は effectId を上書き（ゲストへ正しく伝播させるため）
     if (slashBArmedRef.current) eff = { ...eff, effectId: 'slashB' }
     // ヨット成立時: 前段演出（slashB/cupHide 等）を抑制し、光の柱 staging のみに集中させる
-    if (finalsAll.length === 5 && finalsAll.every(v => v === finalsAll[0])) {
+    const isYacht2 = finalsAll.length === 5 && finalsAll.every(v => v === finalsAll[0])
+    if (isYacht2) {
       eff = { effectId: 'none', mode: 'none' }
       slashBArmedRef.current = false
     }
-    const { showValues, cupIndices, swapIndices } = computeShowDice(finalsAll, eff.mode)
+    // ヨット時: キープ外ダイスのみからデコイを選ぶ（光の柱で書き換えが見えるように）
+    const keptIdsForDecoy = newStates.filter(s => s.location === 'kept').map(s => s.id)
+    const { showValues, cupIndices, swapIndices } = computeShowDice(
+      finalsAll,
+      isYacht2 ? 'success' : eff.mode,
+      keptIdsForDecoy,
+    )
     const shownStates = newStates.map(s =>
       s.location === 'field' ? { ...s, displayValue: showValues[s.id] } : s
     )
@@ -1058,8 +1069,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     rollNoRef.current += 1
     gameLogRef.current.push({ type: 'roll', turn, rollNo: rollNoRef.current, finalValues: finalsAll, displayValues: sv, effectId: eff.effectId, displayRank: getDisplayRank(finalsAll) })
     // ネットモード（ホスト）: 再振り結果をゲストへ送信
+    // skipNotify=true の場合はホストが観戦中（onRollResult 経由）= hostProcessGuestRoll が既に送信済み
     const keptIdsAfterReroll = newStates.filter(s => s.location === 'kept').map(s => s.id)
-    netMode?.notifyRoll(finalsAll, sv, eff.effectId, eff.mode, keptIdsAfterReroll, Math.max(0, rollNoRef.current - 1))
+    if (!skipNotify) netMode?.notifyRoll(finalsAll, sv, eff.effectId, eff.mode, keptIdsAfterReroll, Math.max(0, rollNoRef.current - 1))
     // ワープ: 非キープは即フィールドから消え、カップ内(count個)の中身として出現
     dieStatesRef.current = shownStates
     setDieStates(shownStates)
@@ -1262,8 +1274,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const selectStagingEffect = useCallback((): StagingEffect => {
     const r = lastResultRef.current
     if (!r || r.mode === 'none') return 'none'
-    return (r.effectId === 'flip' || r.effectId === 'thunder' || r.effectId === 'thunder_v2' || r.effectId === 'fire' || r.effectId === 'slashB')
+    const effect = (r.effectId === 'flip' || r.effectId === 'thunder' || r.effectId === 'thunder_v2' || r.effectId === 'fire' || r.effectId === 'slashB')
       ? r.effectId : 'none'
+    // 見せ目(decoy)がある場合は必ず演出して final を開示する。none 抽選でも flip に引き上げ。
+    if (effect === 'none' && swapIndicesRef.current.length > 0) return 'flip'
+    return effect
   }, [])
 
   // ── cover 後の確定: swap 対象の dieStates を「現在の見た目＝final」に書き戻す ──
@@ -1659,10 +1674,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         // 観戦側（相手ターン）の場合は重複呼び出しを避けるため何もしない
       } else {
         // 再振り: finals + effectId を注入してから handleReRoll
+        // skipNotify=true: hostProcessGuestRoll が既にゲストへ roll_result を送信済みのため二重送信を防ぐ
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, finalValues: finals, displayValues: finals }
         }
-        handleReRoll(false)
+        handleReRoll(false, true)
         // handleReRoll が lastResultRef を上書きするので、その後に inject の effectId を反映
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, effectId: inject.effectId, mode: inject.effectVariant }
@@ -1728,8 +1744,13 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       setGameOver(true)
     }))
 
+    // ホストがゲームリセットしたときゲスト側で自動リセット
+    unsubs.push(netMode.onGameReset(() => {
+      handleGameReset(true)
+    }))
+
     return () => unsubs.forEach(u => u())
-  }, [netMode, resetForNextTurn, preparePendingRoll])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [netMode, resetForNextTurn, preparePendingRoll, handleGameReset])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── ゲームリセット ──────────────────────────────
   const downloadLog = useCallback(() => {
@@ -1761,11 +1782,10 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     URL.revokeObjectURL(url)
   }, [playerSheet, cpuSheet])
 
-  const handleGameReset = useCallback(() => {
+  const handleGameReset = useCallback((fromNet = false) => {
     setPlayerSheet({ ...EMPTY_SHEET })
     setCpuSheet({ ...EMPTY_SHEET })
     setGameOver(false)
-    setTurn('player')
     resetForNextTurn()
     bgm.stopAll(); bgm.playDefault()   // リセット時に BGM を停止→デフォルト再開
     setYachtActive(false)
@@ -1774,7 +1794,20 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     gameStartedAtRef.current = new Date().toISOString()
     rollNoRef.current      = 0
     roundNoRef.current     = 0
-  }, [resetForNextTurn])
+
+    if (netMode) {
+      if (netMode.role === 'host' && !fromNet) {
+        // ホストがボタンを押した → ネット状態リセット＋ゲストへ通知
+        netMode.notifyGameReset()
+        setTurn('player')   // ホスト先攻
+      } else {
+        // ゲストがボタンを押した、またはホストのリセット通知を受けた側
+        setTurn('cpu')   // 相手（ホスト）のターンを待機
+      }
+    } else {
+      setTurn('player')
+    }
+  }, [resetForNextTurn, netMode])
 
   // ── ネット対戦: 相手からの staging シグナルを受信したとき演出を再生 ──
   useEffect(() => {
@@ -2176,6 +2209,34 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           setSlashBArmedUI(v)
         }}
       />}
+
+      {/* ── ターンチェンジバナー（ターン開始・未投入のときだけ中央表示） ── */}
+      {turn === 'player' && phase === 'idle' && rollsLeft === 3 && !gameOver && (
+        <div style={{
+          position: 'absolute',
+          top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+          animation: 'turnBannerIn 0.4s ease-out',
+        }}>
+          <div style={{
+            background: 'rgba(0,0,0,0.55)',
+            border: '2px solid rgba(212,180,131,0.6)',
+            borderRadius: 12,
+            padding: '14px 32px',
+            color: '#f0d9a8',
+            fontFamily: 'serif',
+            fontSize: 22,
+            fontWeight: 'bold',
+            letterSpacing: 3,
+            textShadow: '0 0 12px rgba(255,220,120,0.8)',
+            whiteSpace: 'nowrap',
+          }}>
+            🎲 あなたのターンです
+          </div>
+        </div>
+      )}
 
       {/* ── メインUI ── */}
       <div style={{

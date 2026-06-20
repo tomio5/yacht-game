@@ -449,12 +449,25 @@ export function ScoreSheet({
                 <td style={{ ...baseCell, height: 32, paddingLeft: 8, color: '#e8d5b0', fontSize: 10, fontWeight: 'bold', borderTop: `2px solid ${CBORDER}` }}>
                   総合得点
                 </td>
-                <td style={{ ...baseCell, height: 32, textAlign: 'center', background: YOUCOL, borderTop: `2px solid ${CBORDER}` }}>
-                  <span style={{ fontSize: 16, fontWeight: 'bold', color: '#e8d5b0' }}>{pTotal}</span>
-                </td>
-                <td style={{ ...baseCell, height: 32, textAlign: 'center', background: CPUCOL, borderTop: `2px solid ${CBORDER}` }}>
-                  <span style={{ fontSize: 16, fontWeight: 'bold', color: '#c8a888' }}>{cTotal}</span>
-                </td>
+                {!swapColumns ? (
+                  <>
+                    <td style={{ ...baseCell, height: 32, textAlign: 'center', background: YOUCOL, borderTop: `2px solid ${CBORDER}` }}>
+                      <span style={{ fontSize: 16, fontWeight: 'bold', color: '#e8d5b0' }}>{pTotal}</span>
+                    </td>
+                    <td style={{ ...baseCell, height: 32, textAlign: 'center', background: CPUCOL, borderTop: `2px solid ${CBORDER}` }}>
+                      <span style={{ fontSize: 16, fontWeight: 'bold', color: '#c8a888' }}>{cTotal}</span>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td style={{ ...baseCell, height: 32, textAlign: 'center', background: CPUCOL, borderTop: `2px solid ${CBORDER}` }}>
+                      <span style={{ fontSize: 16, fontWeight: 'bold', color: '#c8a888' }}>{cTotal}</span>
+                    </td>
+                    <td style={{ ...baseCell, height: 32, textAlign: 'center', background: YOUCOL, borderTop: `2px solid ${CBORDER}` }}>
+                      <span style={{ fontSize: 16, fontWeight: 'bold', color: '#e8d5b0' }}>{pTotal}</span>
+                    </td>
+                  </>
+                )}
               </tr>
             </tbody>
           </table>

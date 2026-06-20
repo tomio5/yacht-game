@@ -36,6 +36,8 @@ export interface NetMode {
   notifyRecord: (category: Category, points: number, playerSheet: ScoreSheet, opponentSheet: ScoreSheet) => void
   // ホスト専用：ゲーム終了後に呼ぶ
   notifyGameOver: (playerTotal: number, opponentTotal: number) => void
+  // ホスト専用：次のゲーム開始時に呼ぶ（ゲストへリセット通知）
+  notifyGameReset: () => void
 
   // ゲスト専用：振るボタン押下 → ホストへ req_roll を送る
   requestRoll: () => void
@@ -53,6 +55,8 @@ export interface NetMode {
   // staging 演出トリガー通知: アクティブ側が起動したとき相手へ送信、受信側は即再生
   notifyStaging:  () => void
   onStaging:      (cb: () => void) => () => void
+  // ホストがゲームリセットしたときゲスト側で呼ばれる
+  onGameReset:    (cb: () => void) => () => void
   // カップ投入開始通知: アクティブ側がカップをクリックした瞬間に相手へ送り、観戦側カップを連動させる
   notifyCupThrown: () => void
   onCupThrown:     (cb: () => void) => () => void
@@ -73,6 +77,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   const stagingCbs     = useRef<Set<() => void>>(new Set())
   const cupThrownCbs    = useRef<Set<() => void>>(new Set())
   const cupReleasedCbs  = useRef<Set<() => void>>(new Set())
+  const gameResetCbs    = useRef<Set<() => void>>(new Set())
 
   // ホストが管理するシート（ゲスト→ホストのreq_record受信時に使う）
   const hostSheetRef  = useRef<ScoreSheet>(emptySheet())
@@ -192,6 +197,10 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
             isTurnMineRef.current = false  // ホスト先攻
             turnChangeCbs.current.forEach(cb => cb(false))  // ゲストの初期ターンを「相手ターン」に設定
             break
+          case 'game_reset':
+            isTurnMineRef.current = false  // ホスト先攻
+            gameResetCbs.current.forEach(cb => cb())
+            break
           case 'turn_start': {
             const mine = msg.turn === 'guest'
             isTurnMineRef.current = mine
@@ -295,6 +304,17 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     peerConnection.send({ type: 'game_over', hostTotal: playerTotal, guestTotal: opponentTotal, winner } satisfies HostToGuest)
   }, [role])
 
+  const notifyGameReset = useCallback(() => {
+    if (role !== 'host') return
+    hostSheetRef.current    = emptySheet()
+    guestSheetRef.current   = emptySheet()
+    guestKeptIds.current    = []
+    guestDiceFinals.current = [1, 1, 1, 1, 1] as DieValue[]
+    isTurnMineRef.current   = true   // ホスト先攻
+    peerConnection.send({ type: 'game_reset' } satisfies HostToGuest)
+    peerConnection.send({ type: 'turn_start', turn: 'host', rollsLeft: 3 } satisfies HostToGuest)
+  }, [role])
+
   const requestRoll = useCallback(() => {
     if (role !== 'guest') return
     peerConnection.send({ type: 'req_roll' } satisfies GuestToHost)
@@ -333,13 +353,14 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   return {
     role,
     isMyTurn: () => isTurnMineRef.current,
-    notifyRoll, notifyKeep, notifyRecord, notifyGameOver, notifyStaging, notifyCupThrown, notifyCupReleased,
+    notifyRoll, notifyKeep, notifyRecord, notifyGameOver, notifyGameReset, notifyStaging, notifyCupThrown, notifyCupReleased,
     requestRoll, requestKeep, requestRecord,
     onRollResult:  sub(rollResultCbs.current),
     onKeepUpdate:  sub(keepUpdateCbs.current),
     onScoreUpdate: sub(scoreUpdateCbs.current),
     onTurnChange:  sub(turnChangeCbs.current),
     onGameOver:    sub(gameOverCbs.current),
+    onGameReset:   sub(gameResetCbs.current),
     onStaging:      sub(stagingCbs.current),
     onCupThrown:    sub(cupThrownCbs.current),
     onCupReleased:  sub(cupReleasedCbs.current),

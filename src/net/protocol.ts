@@ -22,6 +22,11 @@ export interface MsgGameStart {
   hostGoesFirst: boolean   // true=ホスト先攻（現状は常に true）
 }
 
+/** ゲームリセット。ホストが次のゲームを押したときゲストへ通知 */
+export interface MsgGameReset {
+  type: 'game_reset'
+}
+
 /** ターン開始。誰のターンかと残りロール数をリセット */
 export interface MsgTurnStart {
   type: 'turn_start'
@@ -119,6 +124,7 @@ export interface MsgCupReleased {
 /** ホスト→ゲスト方向のメッセージ */
 export type HostToGuest =
   | MsgGameStart
+  | MsgGameReset
   | MsgTurnStart
   | MsgRollResult
   | MsgKeepUpdate

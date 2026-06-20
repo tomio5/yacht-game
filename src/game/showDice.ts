@@ -129,10 +129,16 @@ function getStraightDecoy(
 function getSuccessDecoy(
   finalValues: DieValue[],
   role:        ScoringRole,
+  keptIds:     number[],
 ): { index: number; decoy: DieValue } | null {
   switch (role.type) {
     case 'yacht': {
-      const index = 4
+      // キープ外(field)のダイスからランダムに1個選んでデコイを仕込む。
+      // 光の柱演出で書き換えが見えるように、着地時点でヨットが完成して見えないようにする。
+      const fieldIndices = [0, 1, 2, 3, 4].filter(i => !keptIds.includes(i))
+      const index = fieldIndices.length > 0
+        ? fieldIndices[Math.floor(Math.random() * fieldIndices.length)]
+        : 4  // 全キープは実際には起きないが保険
       return { index, decoy: differentValue(finalValues[index]) }
     }
     case 'fourDice': {
@@ -174,7 +180,8 @@ function getSuccessDecoy(
  */
 export function computeShowDice(
   finalValues: DieValue[],
-  mode: EffectMode
+  mode: EffectMode,
+  keptIds: number[] = [],
 ): ShowDiceResult {
   // 演出なし / auto（auto の具体 mode は投入準備時に解決済み。ここに来る auto は素直）
   if (mode === 'none' || mode === 'auto') {
@@ -188,7 +195,7 @@ export function computeShowDice(
 
   // 成功：決定役に応じて1個だけ decoy に差し替えてリーチを見せ、cover 中に final へ戻す
   const role  = getBestScoringRole(finalValues)
-  const decoy = getSuccessDecoy(finalValues, role)
+  const decoy = getSuccessDecoy(finalValues, role, keptIds)
   if (!decoy) {
     // 未対応役（ストレート等）→ 化けない。カップは覆うが差し替えなし（= miss と同じ見た目）
     return { showValues: [...finalValues], cupIndices: missCupIndices(finalValues), swapIndices: [] }
