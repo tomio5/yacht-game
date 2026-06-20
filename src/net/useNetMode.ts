@@ -13,6 +13,7 @@ import type { HostToGuest, GuestToHost, MsgRollResult, MsgKeepUpdate, MsgScoreRe
 import { rollDieValue } from '../game/dice'
 import { calcCategoryScore, calcTotalScore, getDisplayRank } from '../game/scoring'
 import { selectEffectFromTable } from '../game/effectTable'
+import { computeShowDice } from '../game/showDice'
 import type { Category, DieValue, ScoreSheet } from '../game/types'
 
 // ── GameScene が受け取る netMode の型 ─────────────────
@@ -101,6 +102,12 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
       effectId:      draw.effectId,
       effectVariant: draw.variant ?? '-',
       displayRank:   rank,
+    }
+    // ヨット成立時: デコイ付き displayValues を計算して送信（ゲスト・ホスト観戦側でも正しい見せ目になる）
+    const isYacht = newFinals.every(v => v === newFinals[0])
+    if (isYacht) {
+      const { showValues } = computeShowDice(newFinals, 'success', keptIds)
+      rollMsg.displayValues = showValues
     }
     guestDiceFinals.current = newFinals   // スコア記入時に正しい出目を参照できるよう更新
     guestKeptIds.current    = []          // 再振り後はキープ選択をリセット（gatherFieldDice で全員 field に戻るため）

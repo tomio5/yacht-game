@@ -1028,8 +1028,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const specified = lastResultRef.current?.finalValues   // デバッグ/前回の確定目
     const newStates: DieState[] = cur.map(s => {
       if (s.location === 'kept') return { ...s }   // キープ分は固定（不変）
-      // 振り直し分: CPU/ネットホストは新規ランダム、ソロプレイヤーはデバッグ指定値（無ければランダム）
-      const v = (auto || (netMode?.role === 'host')
+      // 振り直し分: CPU/ホスト自身の再振りはランダム。観戦パス(skipNotify=true)はホストが送った確定目を使う。
+      const v = (auto || (netMode?.role === 'host' && !skipNotify)
         ? Math.ceil(Math.random() * 6)
         : (specified?.[s.id] ?? Math.ceil(Math.random() * 6))) as DieValue
       return {
