@@ -51,8 +51,8 @@ const LBROWN = '#a07850'   // テキスト薄
 const CBORDER= '#c8b090'   // 罫線
 const YOUCOL = 'rgba(30,80,180,0.07)'   // YOU列帯
 const CPUCOL = 'rgba(100,50,10,0.06)'   // CPU列帯
-const YOUHL  = '#1a4aaa'   // YOU予定スコア
-const YOUHLBG= 'rgba(26,74,170,0.12)'
+const YOUHL  = '#f0e060'   // YOU予定スコア（明るいゴールド。木目背景に対してコントラスト高）
+const YOUHLBG= 'rgba(200,160,0,0.18)'
 const ZEROC  = '#b0987a'
 const LOCKC  = '#3a2a18'
 const YACHTC = '#8b1a1a'
@@ -107,7 +107,8 @@ function DieBadge({ n }: { n: string }) {
 
 // ── 音設定（スコアシート下段） ──
 function AudioControls() {
-  const [vol, setVol] = useState(Math.round(getMasterVolume() * 100))
+  // スライダーは知覚に合わせた二乗カーブ: slider(0-100) → gain = (slider/100)^2
+  const [vol, setVol] = useState(Math.round(Math.sqrt(getMasterVolume()) * 100))
 
   return (
     <div style={{
@@ -120,7 +121,7 @@ function AudioControls() {
         <span style={{ fontSize: 12 }}>🔈</span>
         <input
           type="range" min={0} max={100} value={vol}
-          onChange={(e) => { resumeAudio(); const n = Number(e.target.value); setVol(n); setMasterVolume(n / 100) }}
+          onChange={(e) => { resumeAudio(); const n = Number(e.target.value); setVol(n); setMasterVolume((n / 100) ** 2) }}
           style={{ flex: 1, accentColor: '#2d6a2d', cursor: 'pointer' }}
         />
         <span style={{ fontSize: 10, color: '#d8c8b4', minWidth: 30, textAlign: 'right', fontFamily: 'monospace' }}>
