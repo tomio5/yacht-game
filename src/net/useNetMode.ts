@@ -269,7 +269,8 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     keptIds: number[], rollsLeft: number,
   ) => {
     if (role !== 'host') return
-    guestDiceFinals.current = finals  // ホストがゲストターンを観戦中の参照（ここではホストターン）
+    // notifyRoll はホスト自身のターンでのみ呼ばれる（ゲストロールは hostProcessGuestRoll が直接送信）。
+    // guestDiceFinals はゲスト確定目の追跡用なのでここでは触らない（旧実装はホスト目で上書きしていた）。
     peerConnection.send({
       type: 'roll_result', turn: 'host', rollsLeft,
       finalValues: finals, displayValues, keptIds,

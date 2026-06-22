@@ -1537,7 +1537,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const keptIds = dieStatesRef.current.filter(s => s.location === 'kept').map(s => s.id)
     if (netMode?.role === 'host') netMode.notifyKeep(keptIds)
     else netMode?.requestKeep(id, true)
-  }, [phase, turn, maybeTriggerStaging, netMode])
+  }, [phase, turn, rollsLeft, maybeTriggerStaging, netMode])
 
   // ── アンキープ: kept → field ─────────────────────
   const handleUnkeep = useCallback((id: number) => {
@@ -1579,7 +1579,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       dieRefsRef.current    = dieConfigsRef.current.map(c => c.ref)
       setDieConfigs([...dieConfigsRef.current])
     }
-  }, [phase, turn, maybeTriggerStaging])
+  }, [phase, turn, rollsLeft, maybeTriggerStaging, netMode])
 
   // ── スコア記入 (プレイヤー) ──────────────────────
   const handleRecord = useCallback((cat: Category) => {
@@ -1592,10 +1592,17 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
     roundNoRef.current += 1
     gameLogRef.current.push({ type: 'record', turn: 'player', roundNo: roundNoRef.current, category: cat, points: pts })
+    // シート更新・ゲームオーバー判定・ネット通知を1回の updater にまとめる（旧実装は二重に setPlayerSheet していた）。
     setPlayerSheet(prev => {
       const next = { ...prev, [cat]: pts }
       setCpuSheet(cSheet => {
-        if (checkGameOver(next, cSheet)) setTimeout(() => setGameOver(true), 100)
+        const over = checkGameOver(next, cSheet)
+        // ホストは記入結果と（成立時）ゲーム終了を権威としてゲストへ通知
+        if (netMode?.role === 'host') {
+          netMode.notifyRecord(cat, pts, next, cSheet)
+          if (over) netMode.notifyGameOver(calcTotalScore(next), calcTotalScore(cSheet))
+        }
+        if (over) setTimeout(() => setGameOver(true), 100)
         return cSheet
       })
       return next
@@ -1604,23 +1611,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // 記入確定の瞬間に全ダイスを即カップへ収める（ワープ＝即時クリア）→ 相手ターンへ
     resetForNextTurn()
     if (netMode) {
-      // ネットモード: 記入通知。ターン切り替えは onTurnChange で受ける
-      if (netMode.role === 'host') {
-        setPlayerSheet(prev => {
-          const next = { ...prev, [cat]: pts }
-          setCpuSheet(cSheet => {
-            netMode.notifyRecord(cat, pts, next, cSheet)
-            if (checkGameOver(next, cSheet)) {
-              netMode.notifyGameOver(calcTotalScore(next), calcTotalScore(cSheet))
-              setTimeout(() => setGameOver(true), 100)
-            }
-            return cSheet
-          })
-          return next
-        })
-      } else {
-        netMode.requestRecord(cat)
-      }
+      // ゲストはホストへ記入をリクエスト（ホストは上の updater で通知済み）。ターン切替は onTurnChange で受ける。
+      if (netMode.role === 'guest') netMode.requestRecord(cat)
     } else {
       setTurn('cpu')
     }
@@ -1708,9 +1700,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       if (netMode.isMyTurn()) return   // 自ターンはローカルで既に処理済み
       const prev = dieStatesRef.current
       dieStatesRef.current = prev.map(s => {
-        const nowKept = keptIds.includes(s.id)
+        const keepIdx = keptIds.indexOf(s.id)   // キープ欄スロット順（keptIds の並び順）
+        const nowKept = keepIdx >= 0
         const wasKept = s.location === 'kept'
         return { ...s, location: nowKept ? 'kept' as const : 'field' as const,
+          keepOrder: nowKept ? keepIdx : -1,   // 観戦側でもキープ欄の並びを keptIds に揃える
           // アンキープ時: mountKey を上げて FieldDie を強制リマウント（古い物理 config が使われないよう）
           mountKey: (!nowKept && wasKept) ? s.mountKey + 1 : s.mountKey,
         }
@@ -1980,6 +1974,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           <CupAnim ref={cupRef} onSpawn={handleCupSpawn}
             onThrowStart={netMode ? () => netMode.notifyCupThrown() : undefined}
             onThrowRelease={netMode ? () => netMode.notifyCupReleased() : undefined}
+            canThrow={turn === 'player'}
           />
           <FractureSystem ref={fractureRef} />   {/* 雷v2 の欠片プール（32個常設・退避） */}
           {/* 斬撃割れ用・半割れ破片2個常設 */}

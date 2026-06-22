@@ -240,11 +240,17 @@ interface CupAnimProps {
    * pourOrigin: ダイスを生成する起点 (world 座標)
    */
   onSpawn?: (pourOrigin: [number, number, number]) => void
+  /**
+   * カップを手動クリックで投げられるか。false のときポインタ操作を無視する。
+   * ネット対戦の観戦側（相手ターン）では false にして、観戦側カップが自分で投入を開始しないようにする。
+   * triggerSyncRoll/triggerAutoRoll（プログラム呼び出し）はこのフラグに関係なく動く。
+   */
+  canThrow?: boolean
 }
 
 // ── コンポーネント ─────────────────────────────────────
 export const CupAnim = forwardRef<CupAnimHandle, CupAnimProps>(
-  function CupAnim({ onSpawn, onThrowStart, onThrowRelease }, ref) {
+  function CupAnim({ onSpawn, onThrowStart, onThrowRelease, canThrow = true }, ref) {
 
     const groupRef  = useRef<Group>(null)
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -273,9 +279,11 @@ export const CupAnim = forwardRef<CupAnimHandle, CupAnimProps>(
     const onSpawnRef        = useRef(onSpawn)
     const onThrowStartRef   = useRef(onThrowStart)
     const onThrowReleaseRef = useRef(onThrowRelease)
+    const canThrowRef       = useRef(canThrow)
     useEffect(() => { onSpawnRef.current        = onSpawn        }, [onSpawn])
     useEffect(() => { onThrowStartRef.current   = onThrowStart   }, [onThrowStart])
     useEffect(() => { onThrowReleaseRef.current = onThrowRelease }, [onThrowRelease])
+    useEffect(() => { canThrowRef.current       = canThrow       }, [canThrow])
 
     useEffect(() => {
       const handleUp = () => {
@@ -573,6 +581,8 @@ export const CupAnim = forwardRef<CupAnimHandle, CupAnimProps>(
 
     function handlePointerDown() {
       if (phase.current !== 'roll_ready') return
+      // 観戦側（相手ターン）はカップを手動で投げられない。投入は triggerSyncRoll で連動させる。
+      if (!canThrowRef.current) return
       // roll_ready になった直後の誤発火を防ぐ（振るボタンのクリックがキャンバスへ伝播するケース）
       if (performance.now() - readyAt.current < 150) return
       onThrowStartRef.current?.()
