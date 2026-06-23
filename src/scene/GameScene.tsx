@@ -66,7 +66,7 @@ import { DebugPanel } from './DebugPanel'
 import { ScoreSheet } from './ScoreSheet'
 import { computeShowDice } from '../game/showDice'
 import { calcCategoryScore, calcTotalScore, getDisplayRank } from '../game/scoring'
-import { selectEffectFromTable, drawIndependentCupHide } from '../game/effectTable'
+import { selectEffectFromTable, drawIndependentCupHide, drawThrowEffect } from '../game/effectTable'
 import type { EffectId } from '../game/effectTable'
 import { cpuKeepDice, cpuChooseCategory } from '../game/cpuAI'
 import { SE, resumeAudio, playDiceHit, playThunderA1SE, playThunderV2SE, playFlipSE, playConfidenceSE, playFireSE, playZangekiSE } from '../game/audio'
@@ -758,6 +758,53 @@ function selectSlashPattern(isSuccess: boolean): SlashAssemblePattern {
 // ── GameScene ───────────────────────────────────────
 import type { NetMode } from '../net/useNetMode'
 
+// オーバーレイ opacity を rAF で from→to へトゥイーンする小ヘルパ（演出バッチ用）
+function tweenValue(setter: (v: number) => void, from: number, to: number, durMs: number, onDone?: () => void) {
+  const start = performance.now()
+  const step = (now: number) => {
+    const k = Math.min((now - start) / durMs, 1)
+    setter(from + (to - from) * k)
+    if (k < 1) requestAnimationFrame(step)
+    else onDone?.()
+  }
+  requestAnimationFrame(step)
+}
+
+// 投入演出（B系統＝カップ投入過程を差し替え）。選ばれたら見せ目を出さず finalValue のみ。
+export const THROW_EFFECTS = [
+  { key: 'none',  label: 'なし（通常）' },
+  { key: 'slowA', label: 'スローA（一瞬）' },
+  { key: 'slowB', label: 'スローB（持続）' },
+  { key: 'fake',  label: 'フェイク投入' },
+] as const
+export type ThrowEffect = typeof THROW_EFFECTS[number]['key']
+
+// 投入演出の調整値（実機で詰める）
+// スロー＝重力(1/k²)・並進(1/k)・回転(1/k) を一緒に縮めると軌道の形を保ったまま k 倍遅い
+// スローモーションになる（回転も遅くなる）。下記は k≈2.3 相当（従来の約2倍遅い）。
+const SLOW_A_GRAV   = 0.16  // スローA: 射出直後の重力倍率
+const SLOW_A_MS     = 1300  // スローA: 弱重力の継続ms（その後 1.0 へ）
+const SLOW_A_IMP    = 0.75  // スローA: 射出インパルス倍率（勢いは残しつつ飛びすぎ抑制）
+const SLOW_A_TORQUE = 0.40  // スローA: 回転（トルク）倍率
+const SLOW_B_GRAV   = 0.19  // スローB: 静止まで保つ重力倍率
+const SLOW_B_IMP    = 0.43  // スローB: 射出インパルス倍率
+const SLOW_B_TORQUE = 0.43  // スローB: 回転（トルク）倍率
+const SLOW_B_MAXMS  = 6000  // スローB: 安全のため最大この時間で重力復帰
+const FAKE_PUMPS    = 3     // フェイク: 空振り（再投入モーション）回数
+
+// デバッグ「演出テスト」で再生できる追加演出（本番テーブル未登録）
+export const STAGING_TEST_EFFECTS = [
+  { key: 'doubleFlip', label: 'ダブルフリップ ✓' },
+  { key: 'windmill',   label: '風車（連続フリップ）✓' },
+  { key: 'flashbang',  label: 'フラッシュバン' },
+  { key: 'spotlight',  label: 'スポットライト' },
+  { key: 'shake',      label: '画面シェイク' },
+  { key: 'flipAll',    label: '一斉フリップ' },
+  { key: 'tripleFlip', label: 'トリプルフリップ' },
+  { key: 'zigzagDash', label: 'ジグザグダッシュ' },
+  { key: 'chainBolt',  label: 'チェイン落雷' },
+] as const
+
 export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const [phase,       setPhase]       = useState<GamePhase>('idle')
   const [turn,        setTurn]        = useState<Turn>('player')
@@ -787,6 +834,12 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const yachtKeyRef   = useRef(0)
   const [yachtVariant, setYachtVariant] = useState(1)   // 光の柱バリアント（本番=1 黄金の祝福。DebugPanel で選択）
   const yachtTestRef  = useRef(false)                   // DebugPanel からの単発テスト再生か（onDone でフェイズを変えない）
+  // 投入演出（B系統）: 重力スケール（スロー）＋ デバッグ強制／当該ロールの実行値
+  const [gravityScale, setGravityScale] = useState(1)
+  const [debugThrowUI, setDebugThrowUI] = useState<ThrowEffect>('none')  // DebugPanel 表示用（ref と同期）
+  const debugThrowRef   = useRef<ThrowEffect>('none')   // DebugPanel で「次の投入演出」を強制（callback で読む）
+  const activeThrowRef  = useRef<ThrowEffect>('none')   // 当該ロールで実行する投入演出
+  const slowTimeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [slashActive, setSlashActive] = useState(false)
   const slashKeyRef      = useRef(0)
   const slashDieRef      = useRef<SlashDieEffectHandle>(null)
@@ -795,6 +848,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const [slashBArmedUI,  setSlashBArmedUI]  = useState(false)   // DEBUGパネル表示用（ref と同期）
   const darkOverlayRef  = useRef<HTMLDivElement>(null)
   const flashOverlayRef = useRef<HTMLDivElement>(null)
+  const rootRef         = useRef<HTMLDivElement>(null)   // 画面シェイク演出でルート要素を揺らす
   const onDark  = useCallback((v: number) => { if (darkOverlayRef.current)  darkOverlayRef.current.style.opacity  = String(v) }, [])
   const onFlash = useCallback((v: number) => { if (flashOverlayRef.current) flashOverlayRef.current.style.opacity = String(v) }, [])
 
@@ -870,7 +924,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           undefined, s.mountKey,
         )
       }
-      return makeDieConfig(s.id, s.displayValue, {}, spawnOrigin, s.mountKey)
+      const cfg = makeDieConfig(s.id, s.displayValue, {}, spawnOrigin, s.mountKey)
+      // 投入演出スロー時は、軌道の形を保ったまま遅くするため並進(impScale)・回転(torScale)を縮小
+      const slow = activeThrowRef.current
+      const impScale = slow === 'slowA' ? SLOW_A_IMP    : slow === 'slowB' ? SLOW_B_IMP    : 1
+      const torScale = slow === 'slowA' ? SLOW_A_TORQUE : slow === 'slowB' ? SLOW_B_TORQUE : 1
+      if (impScale !== 1) cfg.launchImpulse = { x: cfg.launchImpulse.x * impScale, y: cfg.launchImpulse.y * impScale, z: cfg.launchImpulse.z * impScale }
+      if (torScale !== 1) cfg.launchTorque  = { x: cfg.launchTorque.x * torScale, y: cfg.launchTorque.y * torScale, z: cfg.launchTorque.z * torScale }
+      return cfg
     })
 
     dieStatesRef.current   = states
@@ -888,6 +949,15 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setDieConfigs(configs)
     setRollKey(k => k + 1)
     setPhase('rolling')
+    // 投入演出スロー: 射出と同時に重力を弱める。slowA は一定時間で復帰、slowB は静止で復帰（安全 timeout 併用）。
+    if (slowTimeoutRef.current) { clearTimeout(slowTimeoutRef.current); slowTimeoutRef.current = null }
+    if (activeThrowRef.current === 'slowA') {
+      setGravityScale(SLOW_A_GRAV)
+      slowTimeoutRef.current = setTimeout(() => { setGravityScale(1); slowTimeoutRef.current = null }, SLOW_A_MS)
+    } else if (activeThrowRef.current === 'slowB') {
+      setGravityScale(SLOW_B_GRAV)
+      slowTimeoutRef.current = setTimeout(() => { setGravityScale(1); slowTimeoutRef.current = null }, SLOW_B_MAXMS)
+    }
     // カップ投入音（旧「パンッ」）は廃止。代わりに finalValue で成立する役の最高点が 30 以上のとき、
     // CONFIDENCE_PROB の確率で信頼度演出音（gako / gakokyuin 50/50）を鳴らす。判定は1回だけ。
     maybePlayConfidenceSE(states.map(s => s.finalValue))
@@ -963,20 +1033,36 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       cupIndices = []
       // displayValue≠finalValue のダイスを swap 対象として復元（炎・フリップ等の演出ターゲット特定に必要）
       swapIndices = finals.map((f, i) => showValues[i] !== f ? i : -1).filter(i => i >= 0)
+    } else if (debugThrowRef.current !== 'none') {
+      // 投入演出（B系統）デバッグ強制: 見せ目を出さず finalValue のみ。staging cover も無し。
+      activeThrowRef.current = debugThrowRef.current
+      eff = { effectId: 'none', mode: 'none' }
+      slashBArmedRef.current = false
+      showValues = [...finals]; cupIndices = []; swapIndices = []
     } else {
-      // 1投目は5個すべて field → fieldCount=5（cupHide 条件外）
-      eff = resolveEffect(finals, mode, cover, 5)
-      // デバッグパネルで slashB を手動装填している場合は effectId を上書き（ゲストへ正しく伝播させるため）
-      if (slashBArmedRef.current) eff = { ...eff, effectId: 'slashB' }
-      // ヨット成立時: 前段演出（slashB/cupHide 等）を抑制し、光の柱 staging のみに集中させる
-      const isYacht1 = finals.length === 5 && finals.every(v => v === finals[0])
-      if (isYacht1) {
+      // B系統演出（投入演出）: 自動抽選。当選時は見せ目なし・staging なし。
+      const throwDraw = drawThrowEffect()
+      if (throwDraw !== 'none') {
+        activeThrowRef.current = throwDraw
         eff = { effectId: 'none', mode: 'none' }
         slashBArmedRef.current = false
-        // ヨット: 全ダイスがfield（1投目）→ field から1個ランダムにデコイを仕込む（光の柱で書き換えを見せる）
-        ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, 'success', []))
+        showValues = [...finals]; cupIndices = []; swapIndices = []
       } else {
-        ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, eff.mode))
+        activeThrowRef.current = 'none'
+        // 1投目は5個すべて field → fieldCount=5（cupHide 条件外）
+        eff = resolveEffect(finals, mode, cover, 5)
+        // デバッグパネルで slashB を手動装填している場合は effectId を上書き（ゲストへ正しく伝播させるため）
+        if (slashBArmedRef.current) eff = { ...eff, effectId: 'slashB' }
+        // ヨット成立時: 前段演出（slashB/cupHide 等）を抑制し、光の柱 staging のみに集中させる
+        const isYacht1 = finals.length === 5 && finals.every(v => v === finals[0])
+        if (isYacht1) {
+          eff = { effectId: 'none', mode: 'none' }
+          slashBArmedRef.current = false
+          // ヨット: 全ダイスがfield（1投目）→ field から1個ランダムにデコイを仕込む（光の柱で書き換えを見せる）
+          ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, 'success', []))
+        } else {
+          ;({ showValues, cupIndices, swapIndices } = computeShowDice(finals, eff.mode))
+        }
       }
     }
     const effMode = eff.mode
@@ -1005,6 +1091,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     pendingSpawnRef.current = { states, cupIndices, swapIndices }
     // (A) ターン開始の最初の投入用にカップへ5個用意（setRollReady が中身を表示） */
     cupRef.current?.setRollReady(showValues, 5)
+    // フェイク投入: カップに空振り回数を仕込む（傾いたまま再投入モーションを繰り返してから射出）
+    cupRef.current?.setFakeThrow(activeThrowRef.current === 'fake' ? FAKE_PUMPS : 0)
     setPhase('cup_ready')
   }, [resolveEffect, netMode])
 
@@ -1057,13 +1145,19 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       eff = { effectId: 'none', mode: 'none' }
       slashBArmedRef.current = false
     }
+    // 投入演出（B系統）: デバッグ強制 or 自動抽選。当選時は見せ目なし・staging cover なし。
+    if (debugThrowRef.current !== 'none') {
+      activeThrowRef.current = debugThrowRef.current
+    } else {
+      const throwDraw = drawThrowEffect()
+      activeThrowRef.current = throwDraw
+    }
+    if (activeThrowRef.current !== 'none') { eff = { effectId: 'none', mode: 'none' }; slashBArmedRef.current = false }
     // ヨット時: キープ外ダイスのみからデコイを選ぶ（光の柱で書き換えが見えるように）
     const keptIdsForDecoy = newStates.filter(s => s.location === 'kept').map(s => s.id)
-    const { showValues, cupIndices, swapIndices } = computeShowDice(
-      finalsAll,
-      isYacht2 ? 'success' : eff.mode,
-      keptIdsForDecoy,
-    )
+    const { showValues, cupIndices, swapIndices } = activeThrowRef.current !== 'none'
+      ? { showValues: [...finalsAll] as DieValue[], cupIndices: [] as number[], swapIndices: [] as number[] }
+      : computeShowDice(finalsAll, isYacht2 ? 'success' : eff.mode, keptIdsForDecoy)
     const shownStates = newStates.map(s =>
       s.location === 'field' ? { ...s, displayValue: showValues[s.id] } : s
     )
@@ -1081,6 +1175,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setDieStates(shownStates)
     setDieConfigs([])
     cupRef.current?.setRollReady(sv, count)
+    cupRef.current?.setFakeThrow(activeThrowRef.current === 'fake' ? FAKE_PUMPS : 0)
     setRollsLeft(r => r - 1)
     setPhase('cup_ready')
     // CPU自動・観戦側のみ自動投入。アクティブプレイヤー（再振り）は手動クリック。
@@ -1261,9 +1356,148 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     })
   }, [])
 
+  // ── 追加演出バッチ（既存プリミティブのみ：flip/orientTo/onFlash/onDark/DOM）──────────
+  // staging プレイヤー互換 (onDone)=>void。swap 対象を「隠れた/暗い瞬間」に orientTo して final を開示。
+  // 本番テーブルには未登録。DebugPanel「演出テスト」から現在の盤面で再生して見た目を評価する。
+  const revealSwapNow = useCallback(() => {
+    const finals = dieStatesRef.current.map(s => s.finalValue)
+    for (const i of swapIndicesRef.current) dieRefsRef.current[i]?.current?.orientTo(finals[i])
+  }, [])
+
+  // ① フラッシュバン: 一瞬の強白フラッシュ。白ピークで swap を開示。
+  const playFlashbang = useCallback((onDone: () => void) => {
+    playFlipSE()
+    tweenValue(onFlash, 0, 1, 110, () => {
+      revealSwapNow()
+      window.setTimeout(() => tweenValue(onFlash, 1, 0, 430, onDone), 90)
+    })
+  }, [onFlash, revealSwapNow])
+
+  // ② スポットライト: 周囲を暗転→対象を開示→復帰。
+  const playSpotlight = useCallback((onDone: () => void) => {
+    tweenValue(onDark, 0, 0.8, 200, () => {
+      revealSwapNow()
+      window.setTimeout(() => tweenValue(onDark, 0.8, 0, 540, onDone), 300)
+    })
+  }, [onDark, revealSwapNow])
+
+  // ③ 画面シェイク: ルート要素を揺らす。中盤で swap を開示。
+  const playShake = useCallback((onDone: () => void) => {
+    const el = rootRef.current
+    playThunderA1SE()
+    if (!el) { revealSwapNow(); onDone(); return }
+    el.style.animation = 'screenShake 0.5s ease-in-out'
+    window.setTimeout(() => revealSwapNow(), 160)
+    window.setTimeout(() => { el.style.animation = ''; onDone() }, 520)
+  }, [revealSwapNow])
+
+  // ④ ダブルフリップ: 対象を2回跳ね上げ。
+  const playDoubleFlip = useCallback((onDone: () => void) => {
+    const finals   = dieStatesRef.current.map(s => s.finalValue)
+    const fieldIds = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
+    const target   = swapIndicesRef.current[0] ?? fieldIds[0]
+    const dieRef   = target != null ? dieRefsRef.current[target]?.current : null
+    if (!dieRef || target == null) { onDone(); return }
+    playFlipSE()
+    dieRef.flip(finals[target], () => {
+      playFlipSE()
+      dieRef.flip(finals[target], onDone)
+    })
+  }, [])
+
+  // ⑤ 風車: field ダイスを少しずつ遅延させて順番にフリップ（リングを舞うように）。
+  const playWindmill = useCallback((onDone: () => void) => {
+    const finals = dieStatesRef.current.map(s => s.finalValue)
+    const ids    = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
+    if (ids.length === 0) { onDone(); return }
+    let remaining = ids.length
+    ids.forEach((id, k) => {
+      window.setTimeout(() => {
+        const dieRef = dieRefsRef.current[id]?.current
+        if (!dieRef) { if (--remaining === 0) onDone(); return }
+        if (k === 0) playFlipSE()
+        dieRef.flip(finals[id], () => { if (--remaining === 0) onDone() })
+      }, k * 110)
+    })
+  }, [])
+
+  // ── 追加演出バッチ2（ダイスが動く系。flip / zigzagTo / 雷ビジュアルを流用）──────────
+  // ⑥ 一斉フリップ: 全 field ダイスが同時に跳ねて final へ。
+  const playFlipAll = useCallback((onDone: () => void) => {
+    const finals = dieStatesRef.current.map(s => s.finalValue)
+    const ids    = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
+    if (ids.length === 0) { onDone(); return }
+    let remaining = ids.length
+    playFlipSE()
+    ids.forEach(id => {
+      const dieRef = dieRefsRef.current[id]?.current
+      if (!dieRef) { if (--remaining === 0) onDone(); return }
+      dieRef.flip(finals[id], () => { if (--remaining === 0) onDone() })
+    })
+  }, [])
+
+  // ⑦ トリプルフリップ: 対象を3連続で跳ね上げ。
+  const playTripleFlip = useCallback((onDone: () => void) => {
+    const finals   = dieStatesRef.current.map(s => s.finalValue)
+    const fieldIds = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
+    const target   = swapIndicesRef.current[0] ?? fieldIds[0]
+    const dieRef   = target != null ? dieRefsRef.current[target]?.current : null
+    if (!dieRef || target == null) { onDone(); return }
+    const v = finals[target]
+    playFlipSE()
+    dieRef.flip(v, () => {
+      playFlipSE()
+      dieRef.flip(v, () => { playFlipSE(); dieRef.flip(v, onDone) })
+    })
+  }, [])
+
+  // ⑧ ジグザグダッシュ: 対象が稲妻状に走って元の位置へ着地（tumble で final 開示）。
+  const playZigzagDash = useCallback((onDone: () => void) => {
+    const states   = dieStatesRef.current
+    const finals   = states.map(s => s.finalValue)
+    const fieldIds = states.filter(s => s.location === 'field').map(s => s.id)
+    const target   = swapIndicesRef.current[0] ?? fieldIds[0]
+    const dieRef   = target != null ? dieRefsRef.current[target]?.current : null
+    const pose     = dieRef?.readPose()
+    if (!dieRef || target == null || !pose) { onDone(); return }
+    const p = pose.pos
+    const o = 1.5
+    const pts: [number, number, number][] = [
+      p,
+      [p[0] + o,       p[1], p[2] + o * 0.3],
+      [p[0] - o * 0.7, p[1], p[2] - o],
+      [p[0] + o * 0.5, p[1], p[2] + o * 0.9],
+      p,
+    ]
+    playZangekiSE()
+    dieRef.zigzagTo(pts, finals[target], onDone, SLASH_SEG_STARTS)
+  }, [])
+
+  // ⑨ チェイン落雷: 雷ビジュアルが各ダイスへ連鎖。着弾ごとにフリップで開示。
+  const playChainBolt = useCallback((onDone: () => void) => {
+    const states = dieStatesRef.current
+    const finals = states.map(s => s.finalValue)
+    const field  = states.filter(s => s.location === 'field')
+    if (field.length === 0) { onDone(); return }
+    let remaining = field.length
+    field.forEach((s, k) => {
+      window.setTimeout(() => {
+        const p = s.worldPos ?? dieRefsRef.current[s.id]?.current?.readPose()?.pos
+        thunderFireRef.current += 1
+        if (p) setThunderStrike({ x: p[0], z: p[2], key: thunderFireRef.current, power: 1 })
+        if (k === 0) playThunderA1SE()
+        const dieRef = dieRefsRef.current[s.id]?.current
+        if (dieRef) dieRef.flip(finals[s.id], () => { if (--remaining === 0) { setThunderStrike(null); onDone() } })
+        else if (--remaining === 0) { setThunderStrike(null); onDone() }
+      }, k * 180)
+    })
+  }, [])
+
   // ── 演出の登録（器・staging 専用）: cupHide は staging から外れている（pre_gather_cover で消費）。
   // 将来の staging 系演出は EffectId 追加＋ここに登録＋テーブル行追加だけで足せる。
   type StagingEffect = 'none' | 'flip' | 'thunder' | 'thunder_v2' | 'fire' | 'slashB'
+    | 'flashbang' | 'spotlight' | 'shake' | 'doubleFlip' | 'windmill'
+    | 'flipAll' | 'tripleFlip' | 'zigzagDash' | 'chainBolt'
   const stagingPlayers = useRef<Record<StagingEffect, (onDone: () => void) => void>>({
     none:       (onDone) => onDone(),                  // 演出なし＝即通過
     fire:       (onDone) => playFire(onDone),
@@ -1271,6 +1505,15 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     thunder:    (onDone) => playThunder(onDone),
     thunder_v2: (onDone) => playThunderV2(onDone),
     slashB:     (onDone) => onDone(),                  // gathering 時点で発動済み → staging では即通過
+    flashbang:  (onDone) => playFlashbang(onDone),
+    spotlight:  (onDone) => playSpotlight(onDone),
+    shake:      (onDone) => playShake(onDone),
+    doubleFlip: (onDone) => playDoubleFlip(onDone),
+    windmill:   (onDone) => playWindmill(onDone),
+    flipAll:    (onDone) => playFlipAll(onDone),
+    tripleFlip: (onDone) => playTripleFlip(onDone),
+    zigzagDash: (onDone) => playZigzagDash(onDone),
+    chainBolt:  (onDone) => playChainBolt(onDone),
   })
 
   // ── 演出セレクタ: 今回 staging で再生する cover を返す ──
@@ -1278,7 +1521,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const selectStagingEffect = useCallback((): StagingEffect => {
     const r = lastResultRef.current
     if (!r || r.mode === 'none') return 'none'
-    const effect = (r.effectId === 'flip' || r.effectId === 'thunder' || r.effectId === 'thunder_v2' || r.effectId === 'fire' || r.effectId === 'slashB')
+    const effect = (r.effectId === 'flip' || r.effectId === 'thunder' || r.effectId === 'thunder_v2' || r.effectId === 'fire' || r.effectId === 'slashB' || r.effectId === 'doubleFlip' || r.effectId === 'windmill')
       ? r.effectId : 'none'
     // 見せ目(decoy)がある場合は必ず演出して final を開示する。none 抽選でも flip に引き上げ。
     if (effect === 'none' && swapIndicesRef.current.length > 0) return 'flip'
@@ -1421,6 +1664,12 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // 集約「前」に pre_gather_cover で振った1個に cup を被せてから gathering へ進む。
     diceSettledRef.current = true
     SE.land()
+    // 投入演出スローB: 静止したので重力を通常へ戻す（集約は通常速度）
+    if (activeThrowRef.current === 'slowB') {
+      if (slowTimeoutRef.current) { clearTimeout(slowTimeoutRef.current); slowTimeoutRef.current = null }
+      setGravityScale(1)
+    }
+    activeThrowRef.current = 'none'
     if (lastResultRef.current?.effectId === 'cupHide') {
       enterPreGatherCover()                  // → 完了内部で gathering → staging へ自動連結
       setDieStates([...dieStatesRef.current])
@@ -1634,6 +1883,10 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     stagingArmedRef.current = false
     pendingStagingRef.current = false
     isFirstRollOfTurnRef.current = true
+    // 投入演出（スロー）の取り残し防止: 重力を通常へ戻す
+    if (slowTimeoutRef.current) { clearTimeout(slowTimeoutRef.current); slowTimeoutRef.current = null }
+    activeThrowRef.current = 'none'
+    setGravityScale(1)
     setCpuThinking(false)
     setLastCpuCat(null)
   }, [])
@@ -1953,6 +2206,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   return (
     <div
+      ref={rootRef}
       style={{ width: '100vw', height: '100vh', background: '#180f07' }}
       onPointerDown={() => { resumeAudio(); bgm.resumeBgm() }}
     >
@@ -1970,7 +2224,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         {/* 背景の床（ダークウォルナット）。物理なし・見た目のみ */}
         <WoodFloor />
 
-        <Physics gravity={[0, -20, 0]}>
+        <Physics gravity={[0, -20 * gravityScale, 0]}>
           <Floor />
           <Walls />
           <CupAnim ref={cupRef} onSpawn={handleCupSpawn}
@@ -2237,6 +2491,15 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           bgm.playGrace()
           setYachtActive(true)
         }}
+        stagingTests={STAGING_TEST_EFFECTS}
+        onStagingTest={(key) => {
+          // 現在の盤面（keep_select 想定）に対して追加演出を再生。本番フローには影響しない。
+          const player = stagingPlayers.current[key as StagingEffect]
+          if (player) player(() => setDieStates([...dieStatesRef.current]))
+        }}
+        throwEffects={THROW_EFFECTS}
+        throwEffect={debugThrowUI}
+        onThrowEffectChange={(v) => { debugThrowRef.current = v as ThrowEffect; setDebugThrowUI(v as ThrowEffect) }}
       />}
 
       {/* ── ターンチェンジバナー（ターン開始・未投入のときだけ中央表示） ── */}

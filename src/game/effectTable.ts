@@ -63,7 +63,7 @@
 import type { DisplayRank } from './types'
 
 // 登録済み演出ID（stagingPlayers のキーと対応。'none' は演出なし）
-export type EffectId = 'cupHide' | 'flip' | 'thunder' | 'thunder_v2' | 'fire' | 'slashB'
+export type EffectId = 'cupHide' | 'flip' | 'thunder' | 'thunder_v2' | 'fire' | 'slashB' | 'doubleFlip' | 'windmill'
 
 // variant（書き換える / 書き換えない）。既存 EffectMode の success / miss に対応
 export type EffectVariant = 'success' | 'miss'
@@ -97,30 +97,36 @@ export const EFFECT_TABLE: Record<DisplayRank, EffectTableEntry[]> = {
     { effectId: 'slashB',  variant: 'success', weight:  2 },
   ],
   mid: [
-    { effectId: 'none',       variant: undefined,  weight: 78 },
+    { effectId: 'none',       variant: undefined,  weight: 75 },
     { effectId: 'flip',       variant: 'success',  weight: 10 },
     { effectId: 'thunder',    variant: 'success',  weight:  6 },
     { effectId: 'fire',       variant: 'success',  weight:  3 },
     { effectId: 'fire',       variant: 'miss',     weight:  1 },
     { effectId: 'slashB',     variant: 'success',  weight:  2 },
+    { effectId: 'doubleFlip', variant: 'success',  weight:  2 },
+    { effectId: 'windmill',   variant: 'success',  weight:  1 },
   ],
   strong: [
-    { effectId: 'none',       variant: undefined,  weight: 62 },
+    { effectId: 'none',       variant: undefined,  weight: 57 },
     { effectId: 'flip',       variant: 'success',  weight: 12 },
     { effectId: 'thunder',    variant: 'success',  weight: 11 },
     { effectId: 'fire',       variant: 'success',  weight:  6 },
     { effectId: 'fire',       variant: 'miss',     weight:  2 },
     { effectId: 'thunder_v2', variant: 'success',  weight:  4 },
     { effectId: 'slashB',     variant: 'success',  weight:  3 },
+    { effectId: 'doubleFlip', variant: 'success',  weight:  3 },
+    { effectId: 'windmill',   variant: 'success',  weight:  2 },
   ],
   max: [
-    { effectId: 'none',       variant: undefined,  weight: 42 },
+    { effectId: 'none',       variant: undefined,  weight: 35 },
     { effectId: 'flip',       variant: 'success',  weight:  9 },
     { effectId: 'thunder',    variant: 'success',  weight: 14 },
     { effectId: 'fire',       variant: 'success',  weight:  8 },
     { effectId: 'fire',       variant: 'miss',     weight:  2 },
     { effectId: 'thunder_v2', variant: 'success',  weight: 22 },
     { effectId: 'slashB',     variant: 'success',  weight:  3 },
+    { effectId: 'doubleFlip', variant: 'success',  weight:  4 },
+    { effectId: 'windmill',   variant: 'success',  weight:  3 },
   ],
 }
 
@@ -135,6 +141,26 @@ export function drawIndependentCupHide(rng: () => number = Math.random): EffectD
   if ((r -= CUPHIDE_PROB.success) < 0) return { effectId: 'cupHide', variant: 'success' }
   if ((r -= CUPHIDE_PROB.miss)    < 0) return { effectId: 'cupHide', variant: 'miss' }
   return { effectId: 'none' }
+}
+
+// ── B系統（投入演出）独立抽選 ──
+// 投入時に役が確定していないため、ランクに依存しない固定確率で選ぶ。
+// 全投入の少数に出現する「当たり感」として機能させる。
+export type ThrowEffectId = 'none' | 'slowA' | 'slowB' | 'fake'
+const THROW_PROB: { id: ThrowEffectId; weight: number }[] = [
+  { id: 'none',  weight: 85 },
+  { id: 'slowA', weight:  8 },
+  { id: 'slowB', weight:  5 },
+  { id: 'fake',  weight:  2 },
+]
+export function drawThrowEffect(rng: () => number = Math.random): ThrowEffectId {
+  const total = THROW_PROB.reduce((s, e) => s + e.weight, 0)
+  let r = rng() * total
+  for (const e of THROW_PROB) {
+    r -= e.weight
+    if (r < 0) return e.id
+  }
+  return 'none'
 }
 
 /**

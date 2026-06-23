@@ -41,6 +41,11 @@ interface DebugPanelProps {
   yachtVariantNames?:    string[]
   onYachtVariantChange?: (v: number) => void
   onYachtTest?:          (v: number) => void
+  stagingTests?:         readonly { key: string; label: string }[]
+  onStagingTest?:        (key: string) => void
+  throwEffects?:         readonly { key: string; label: string }[]
+  throwEffect?:          string
+  onThrowEffectChange?:  (key: string) => void
 }
 
 const DIE_VALUES = [1, 2, 3, 4, 5, 6] as DieValue[]
@@ -71,7 +76,7 @@ function randomDice(): DieValue[] {
   return Array.from({ length: 5 }, () => Math.ceil(Math.random() * 6) as DieValue)
 }
 
-export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlashTest, onSlashDieTest, slashDieMode = 'success', onSlashDieModeChange, slashBArmed = false, onSlashBArmedChange, yachtVariant = 0, yachtVariantNames = [], onYachtVariantChange, onYachtTest }: DebugPanelProps) {
+export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlashTest, onSlashDieTest, slashDieMode = 'success', onSlashDieModeChange, slashBArmed = false, onSlashBArmedChange, yachtVariant = 0, yachtVariantNames = [], onYachtVariantChange, onYachtTest, stagingTests = [], onStagingTest, throwEffects = [], throwEffect = 'none', onThrowEffectChange }: DebugPanelProps) {
   const [finals, setFinals] = useState<DieValue[]>([4, 4, 4, 4, 4])
   const [mode,   setMode]   = useState<EffectMode>('success')
   const [cover,  setCover]  = useState<CoverForce>('auto')
@@ -225,6 +230,27 @@ export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlash
           >{COVER_LABELS[c]}</button>
         ))}
       </div>
+
+      {/* 投入演出（B系統）強制: 選ぶと見せ目なしで次の投入がスロー/フェイクに */}
+      {throwEffects.length > 0 && (
+        <>
+          <div style={labelStyle}>投入演出（次の投入）</div>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
+            {throwEffects.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => onThrowEffectChange?.(key)}
+                style={{
+                  flex: '1 0 46%', fontSize: 10, padding: '3px 0', borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${throwEffect === key ? '#9a7a3a' : '#333'}`,
+                  background: throwEffect === key ? '#3a2e12' : '#1a1a1a',
+                  color: throwEffect === key ? '#f0d090' : '#666',
+                }}
+              >{label}</button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* 振るボタン（1回目のみ） */}
       <button
@@ -388,6 +414,33 @@ export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlash
                   opacity: phase === 'idle' ? 1 : 0.45,
                 }}
               >{i + 1}. {name}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 追加演出テスト（現在の盤面に対して再生。keep_select 時のみ） */}
+      {stagingTests.length > 0 && (
+        <div style={{ marginTop: 8, borderTop: '1px solid #333', paddingTop: 8 }}>
+          <div style={{ ...labelStyle, marginBottom: 5 }}>
+            🎬 演出テスト（盤面に再生）
+            {phase !== 'keep_select' && <span style={{ color: '#555' }}> ※振った後</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+            {stagingTests.map(({ key, label }) => (
+              <button
+                key={key}
+                disabled={phase !== 'keep_select'}
+                onClick={() => onStagingTest?.(key)}
+                title={label}
+                style={{
+                  fontSize: 10, padding: '4px 4px', borderRadius: 4,
+                  cursor: phase === 'keep_select' ? 'pointer' : 'not-allowed',
+                  textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  border: '1px solid #3a6a4a', background: '#16241a', color: '#9ad8b0',
+                  opacity: phase === 'keep_select' ? 1 : 0.4,
+                }}
+              >▶ {label}</button>
             ))}
           </div>
         </div>
