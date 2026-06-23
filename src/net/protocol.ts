@@ -119,6 +119,11 @@ export interface MsgCupReleased {
   type: 'cup_released'
 }
 
+/** ロビーで「ゲーム開始」を押した合図。両者が ready になったら対戦開始（双方向） */
+export interface MsgReady {
+  type: 'ready'
+}
+
 // ── ユニオン型 ───────────────────────────────────────────
 
 /** ホスト→ゲスト方向のメッセージ */
@@ -135,6 +140,7 @@ export type HostToGuest =
   | MsgStaging
   | MsgCupThrown
   | MsgCupReleased
+  | MsgReady
 
 /** ゲスト→ホスト方向のメッセージ */
 export type GuestToHost =
@@ -145,6 +151,7 @@ export type GuestToHost =
   | MsgStaging
   | MsgCupThrown
   | MsgCupReleased
+  | MsgReady
 
 /** 受信データのナローイング用型ガード */
 export function isHostToGuest(data: unknown): data is HostToGuest {

@@ -1,18 +1,16 @@
-import { GameScene } from './scene/GameScene'
 import { NetTestPanel } from './net/NetTestPanel'
 import { NetGamePanel } from './net/NetGamePanel'
-import { NetGameWrapper } from './net/NetGameWrapper'
+import { TitleScreen } from './net/TitleScreen'
 
 const params    = new URLSearchParams(window.location.search)
 const isNetTest = params.has('nettest')
 const isNetGame = params.has('netgame')
-const isNet3D   = params.has('net3d')
 
 function App() {
   if (isNetTest) return <NetTestPanel />
   if (isNetGame) return <NetGamePanel />
-  if (isNet3D)   return <NetGameWrapper />
-  return <GameScene />
+  // デフォルト（パラメータなし）= ホストのタイトル画面 / ?connect_to=ID = ゲスト
+  return <TitleScreen />
 }
 
 export default App
