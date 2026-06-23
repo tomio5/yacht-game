@@ -37,6 +37,10 @@ interface DebugPanelProps {
   onSlashDieModeChange?: (mode: 'success' | 'miss') => void
   slashBArmed?:          boolean
   onSlashBArmedChange?:  (v: boolean) => void
+  yachtVariant?:         number
+  yachtVariantNames?:    string[]
+  onYachtVariantChange?: (v: number) => void
+  onYachtTest?:          (v: number) => void
 }
 
 const DIE_VALUES = [1, 2, 3, 4, 5, 6] as DieValue[]
@@ -67,7 +71,7 @@ function randomDice(): DieValue[] {
   return Array.from({ length: 5 }, () => Math.ceil(Math.random() * 6) as DieValue)
 }
 
-export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlashTest, onSlashDieTest, slashDieMode = 'success', onSlashDieModeChange, slashBArmed = false, onSlashBArmedChange }: DebugPanelProps) {
+export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlashTest, onSlashDieTest, slashDieMode = 'success', onSlashDieModeChange, slashBArmed = false, onSlashBArmedChange, yachtVariant = 0, yachtVariantNames = [], onYachtVariantChange, onYachtTest }: DebugPanelProps) {
   const [finals, setFinals] = useState<DieValue[]>([4, 4, 4, 4, 4])
   const [mode,   setMode]   = useState<EffectMode>('success')
   const [cover,  setCover]  = useState<CoverForce>('auto')
@@ -359,6 +363,35 @@ export function DebugPanel({ disabled, result, rollsLeft, phase, onRoll, onSlash
           >▶ 割れ＋復活テスト</button>
         </div>
       </div>
+
+      {/* 光の柱 10パターン（クリックで選択＋即再生） */}
+      {yachtVariantNames.length > 0 && (
+        <div style={{ marginTop: 8, borderTop: '1px solid #333', paddingTop: 8 }}>
+          <div style={{ ...labelStyle, marginBottom: 5 }}>
+            ✨ 光の柱（クリックで再生）
+            {phase !== 'idle' && <span style={{ color: '#555' }}> ※idle時のみ</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+            {yachtVariantNames.map((name, i) => (
+              <button
+                key={i}
+                disabled={phase !== 'idle'}
+                onClick={() => { onYachtVariantChange?.(i); onYachtTest?.(i) }}
+                title={name}
+                style={{
+                  fontSize: 10, padding: '4px 4px', borderRadius: 4,
+                  cursor: phase === 'idle' ? 'pointer' : 'not-allowed',
+                  textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  border: `1px solid ${yachtVariant === i ? '#7a5ad0' : '#333'}`,
+                  background: yachtVariant === i ? '#2a1a4a' : '#1a1a1a',
+                  color: yachtVariant === i ? '#cbb6ff' : '#888',
+                  opacity: phase === 'idle' ? 1 : 0.45,
+                }}
+              >{i + 1}. {name}</button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -58,7 +58,7 @@ import { CupAnim } from './CupAnim'
 import type { CupAnimHandle } from './CupAnim'
 import { FractureSystem } from './FractureSystem'
 import type { FractureSystemHandle, FractureExplodeOpts } from './FractureSystem'
-import { YachtEffect } from './YachtEffect'
+import { YachtEffect, YACHT_VARIANT_NAMES } from './YachtEffect'
 import { SlashEffect } from './SlashEffect'
 import { SlashDieEffect } from './SlashDieEffect'
 import type { SlashDieEffectHandle, SlashAssemblePattern } from './SlashDieEffect'
@@ -785,6 +785,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // Yacht 演出
   const [yachtActive, setYachtActive] = useState(false)
   const yachtKeyRef   = useRef(0)
+  const [yachtVariant, setYachtVariant] = useState(1)   // 光の柱バリアント（本番=1 黄金の祝福。DebugPanel で選択）
+  const yachtTestRef  = useRef(false)                   // DebugPanel からの単発テスト再生か（onDone でフェイズを変えない）
   const [slashActive, setSlashActive] = useState(false)
   const slashKeyRef      = useRef(0)
   const slashDieRef      = useRef<SlashDieEffectHandle>(null)
@@ -1996,6 +1998,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           {yachtActive && (
             <YachtEffect
               key={yachtKeyRef.current}
+              variant={yachtVariant}
               onDark={onDark}
               onFlash={onFlash}
               onCover={() => {
@@ -2008,6 +2011,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
               }}
               onDone={() => {
                 setYachtActive(false)
+                // DebugPanel からの単発テストはフェイズ・盤面に触らない（idle のまま戻す）
+                if (yachtTestRef.current) { yachtTestRef.current = false; return }
                 setPhase('keep_select')
                 setDieStates([...dieStatesRef.current])
               }}
@@ -2220,6 +2225,17 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         onSlashBArmedChange={(v) => {
           slashBArmedRef.current = v
           setSlashBArmedUI(v)
+        }}
+        yachtVariant={yachtVariant}
+        yachtVariantNames={YACHT_VARIANT_NAMES}
+        onYachtVariantChange={setYachtVariant}
+        onYachtTest={(v) => {
+          // 単発テスト再生（盤面・フェイズに触れない）。Grace BGM も鳴らして本番同等に
+          setYachtVariant(v)
+          yachtTestRef.current = true
+          yachtKeyRef.current += 1
+          bgm.playGrace()
+          setYachtActive(true)
         }}
       />}
 
