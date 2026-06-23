@@ -63,6 +63,8 @@ const COVER_LABELS: Record<CoverForce, string> = {
   thunder_v2: '雷 v2',
   fire:       '炎',
   slashB:     '斬撃B',
+  doubleFlip: 'ダブルフリップ',
+  windmill:   '風車',
 }
 const RANK_COLORS: Record<DisplayRank, string> = {
   none:   '#666',
