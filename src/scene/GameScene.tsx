@@ -871,6 +871,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const slashBTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // B系統 force-restore 用
   // Bug3 fix: gathering→keep_select 遅延タイマーを追跡し resetForNextTurn で確実にキャンセル
   const gatherTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Bug1 fix: onRollResult(再振り)で受け取った throwEffect を handleReRoll に橋渡しするための一時置き場
+  const pendingThrowEffectRef = useRef<string>('none')
 
   // ── プレイログ ──────────────────────────────────
   type LogEntry =
@@ -1022,7 +1024,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── 1投目: カップにセット ─────────────────────────
   const preparePendingRoll = useCallback((
     finals: DieValue[], mode: EffectMode, cover: CoverForce = 'auto',
-    netInject?: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode },
+    netInject?: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode; throwEffect?: string },
   ) => {
     debugModeRef.current = mode; debugCoverRef.current = cover   // 再振りへ引き継ぐため保持
     let eff: { effectId: CoverId; mode: EffectMode }
@@ -1031,6 +1033,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     if (netInject) {
       // ネット観戦側: ホストが決定した値をそのまま使う（ローカルで再抽選しない）
       eff = { effectId: netInject.effectId, mode: netInject.effectVariant }
+      // Bug1 fix: 投入演出（スロー/フェイク）もホスト決定値を使う（観戦側が独自抽選すると非同期になる）
+      activeThrowRef.current = (netInject.throwEffect ?? 'none') as ThrowEffect
       showValues = netInject.displayValues
       cupIndices = []
       // displayValue≠finalValue のダイスを swap 対象として復元（炎・フリップ等の演出ターゲット特定に必要）
@@ -1088,7 +1092,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setRollsLeft(2)
     // ネットモード（ホスト）: ロール結果をゲストへ送信 → 両者ともカップ自動投入
     // inject 側（観戦）は notifyRoll しない（ループ防止）
-    if (!netInject) netMode?.notifyRoll(finals, showValues, eff.effectId, effMode, [], 2)
+    if (!netInject) netMode?.notifyRoll(finals, showValues, eff.effectId, effMode, [], 2, activeThrowRef.current)
     // 観戦側は onCupThrown 受信時に triggerAutoRoll するため、ここでは何もしない
     pendingSpawnRef.current = { states, cupIndices, swapIndices }
     // (A) ターン開始の最初の投入用にカップへ5個用意（setRollReady が中身を表示） */
@@ -1147,15 +1151,16 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       eff = { effectId: 'none', mode: 'none' }
       slashBArmedRef.current = false
     }
-    // 投入演出（B系統）: デバッグ強制 or 自動抽選。観戦側（skipNotify=true）は抽選しない。
+    // 投入演出（B系統）: デバッグ強制 or 自動抽選。観戦側（skipNotify=true）はホスト決定値を使う。
     if (debugThrowRef.current !== 'none') {
       activeThrowRef.current = debugThrowRef.current
-    } else if (!skipNotify) {
-      // アクティブプレイヤー側のみ抽選（観戦側は投入演出を独自に出さない）
+    } else if (skipNotify) {
+      // Bug1 fix: 観戦側はホストが roll_result に乗せた throwEffect を採用（自己抽選しない）
+      activeThrowRef.current = pendingThrowEffectRef.current as ThrowEffect
+      pendingThrowEffectRef.current = 'none'
+    } else {
       const throwDraw = drawThrowEffect()
       activeThrowRef.current = throwDraw
-    } else {
-      activeThrowRef.current = 'none'
     }
     if (activeThrowRef.current !== 'none') { eff = { effectId: 'none', mode: 'none' }; slashBArmedRef.current = false }
     // ヨット時: キープ外ダイスのみからデコイを選ぶ（光の柱で書き換えが見えるように）
@@ -1174,7 +1179,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // ネットモード（ホスト）: 再振り結果をゲストへ送信
     // skipNotify=true の場合はホストが観戦中（onRollResult 経由）= hostProcessGuestRoll が既に送信済み
     const keptIdsAfterReroll = newStates.filter(s => s.location === 'kept').map(s => s.id)
-    if (!skipNotify) netMode?.notifyRoll(finalsAll, sv, eff.effectId, eff.mode, keptIdsAfterReroll, Math.max(0, rollNoRef.current - 1))
+    if (!skipNotify) netMode?.notifyRoll(finalsAll, sv, eff.effectId, eff.mode, keptIdsAfterReroll, Math.max(0, rollNoRef.current - 1), activeThrowRef.current)
     // ワープ: 非キープは即フィールドから消え、カップ内(count個)の中身として出現
     dieStatesRef.current = shownStates
     setDieStates(shownStates)
@@ -1921,10 +1926,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       dieConfigsRef.current = []
       setDieConfigs([])
       // ホストが決定した表示値・演出IDを inject として受け取る（自/観戦ともに共通）
-      const inject: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode } = {
+      const inject: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode; throwEffect: string } = {
         displayValues: r.displayValues as DieValue[],
         effectId:      r.effectId as CoverId,
         effectVariant: r.effectVariant as EffectMode,
+        throwEffect:   r.throwEffect ?? 'none',
       }
       if (isFirstRollOfTurnRef.current) {
         // 1投目: inject を渡してローカル抽選をスキップ（isFirstRollOfTurnRef は preparePendingRoll 内で false にセット）
@@ -1937,6 +1943,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, finalValues: finals, displayValues: finals }
         }
+        // Bug1 fix: ホスト決定の throwEffect を handleReRoll skipNotify パスへ橋渡し
+        pendingThrowEffectRef.current = inject.throwEffect
         handleReRoll(false, true)
         // handleReRoll が lastResultRef を上書きするので、その後に inject の effectId を反映
         if (lastResultRef.current) {

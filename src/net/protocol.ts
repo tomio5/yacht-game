@@ -45,6 +45,7 @@ export interface MsgRollResult {
   effectId: string          // 演出ID（'none'/'flip'/etc）
   effectVariant: string     // 'success'|'miss'|'-'
   displayRank: string       // 役ランク
+  throwEffect?: string      // 投入演出ID（'none'/'slowA'/'slowB'/'fake'）
 }
 
 /** キープ状態の更新。ホスト/ゲストどちらかが操作した結果を全員へ */

@@ -299,6 +299,9 @@ export const CupAnim = forwardRef<CupAnimHandle, CupAnimProps>(
 
     useEffect(() => {
       const handleUp = () => {
+        // Bug2 fix: 観戦側（canThrow=false）のクリックで holdReleased/notifyCupReleased が
+        // 発火しないようガード。window イベントなので相手ターン中のクリックも拾ってしまう。
+        if (!canThrowRef.current) return
         if (phase.current === 'roll_shaking' || phase.current === 'roll_moving') {
           holdReleased.current = true
           onThrowReleaseRef.current?.()

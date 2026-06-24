@@ -12,7 +12,7 @@ import { peerConnection } from './PeerConnection'
 import type { HostToGuest, GuestToHost, MsgRollResult, MsgKeepUpdate, MsgScoreRecorded, MsgGameOver } from './protocol'
 import { rollDieValue } from '../game/dice'
 import { calcCategoryScore, calcTotalScore, getDisplayRank } from '../game/scoring'
-import { selectEffectFromTable } from '../game/effectTable'
+import { selectEffectFromTable, drawThrowEffect } from '../game/effectTable'
 import { computeShowDice } from '../game/showDice'
 import type { Category, DieValue, ScoreSheet } from '../game/types'
 
@@ -23,6 +23,7 @@ export interface RollInjection {
   displayValues: DieValue[]
   effectId:      string
   effectVariant: string
+  throwEffect:   string     // 投入演出ID（'none'/'slowA'/'slowB'/'fake'）
 }
 
 export interface NetMode {
@@ -30,7 +31,7 @@ export interface NetMode {
   isMyTurn: () => boolean
 
   // ホスト専用：GameScene がロール確定後に呼ぶ → ゲストへ送信
-  notifyRoll: (finals: DieValue[], displayValues: DieValue[], effectId: string, effectVariant: string, keptIds: number[], rollsLeft: number) => void
+  notifyRoll: (finals: DieValue[], displayValues: DieValue[], effectId: string, effectVariant: string, keptIds: number[], rollsLeft: number, throwEffect: string) => void
   // ホスト専用：キープ変化後に呼ぶ
   notifyKeep: (keptIds: number[]) => void
   // ホスト専用：記入後に呼ぶ
@@ -90,8 +91,9 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     const newFinals: DieValue[] = prevFinals.map((v, i) =>
       keptIds.includes(i) ? v : rollDieValue()
     )
-    const rank    = getDisplayRank(newFinals)
-    const draw    = selectEffectFromTable(rank)
+    const rank        = getDisplayRank(newFinals)
+    const draw        = selectEffectFromTable(rank)
+    const throwEffect = drawThrowEffect()
     const rollMsg: MsgRollResult = {
       type: 'roll_result',
       turn: 'guest',
@@ -102,6 +104,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
       effectId:      draw.effectId,
       effectVariant: draw.variant ?? '-',
       displayRank:   rank,
+      throwEffect,
     }
     // ヨット成立時: デコイ付き displayValues を計算して送信（ゲスト・ホスト観戦側でも正しい見せ目になる）
     const isYacht = newFinals.every(v => v === newFinals[0])
@@ -116,6 +119,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     rollResultCbs.current.forEach(cb => cb({
       finals: newFinals, displayValues: newFinals,
       effectId: draw.effectId, effectVariant: draw.variant ?? '-',
+      throwEffect,
       keptIds, rollsLeft: -1,
     }))
   }, [])
@@ -221,6 +225,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
               displayValues: msg.displayValues as DieValue[],
               effectId:      msg.effectId,
               effectVariant: msg.effectVariant,
+              throwEffect:   msg.throwEffect ?? 'none',
               keptIds:       msg.keptIds,
               rollsLeft:     msg.rollsLeft,
             }))
@@ -267,14 +272,14 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     finals: DieValue[], displayValues: DieValue[],
     effectId: string, effectVariant: string,
     keptIds: number[], rollsLeft: number,
+    throwEffect: string,
   ) => {
     if (role !== 'host') return
     // notifyRoll はホスト自身のターンでのみ呼ばれる（ゲストロールは hostProcessGuestRoll が直接送信）。
-    // guestDiceFinals はゲスト確定目の追跡用なのでここでは触らない（旧実装はホスト目で上書きしていた）。
     peerConnection.send({
       type: 'roll_result', turn: 'host', rollsLeft,
       finalValues: finals, displayValues, keptIds,
-      effectId, effectVariant, displayRank: getDisplayRank(finals),
+      effectId, effectVariant, displayRank: getDisplayRank(finals), throwEffect,
     } satisfies HostToGuest)
   }, [role])
 
