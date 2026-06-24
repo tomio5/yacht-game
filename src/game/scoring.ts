@@ -74,12 +74,14 @@ export function calcCategoryScore(category: Category, dice: Die[]): number {
 // getDisplayRank（演出テーブル駆動）と見せ札生成（showDice）が必ず同じ役を見るよう、
 // 役の選定ロジックをここ1箇所に集約する。判定は既存の calcCategoryScore を再利用。
 //   max    : ヨット（5個同じ）
-//   strong : B.ストレート、または変動役の実点 28〜30
-//   mid    : S.ストレート、または変動役の実点 15〜27
-//   weak   : 変動役の実点 1〜14
+//   strong : 4個そろい（フォーダイス）／フルハウス／B.ストレート
+//   mid    : 3個そろい／S.ストレート
+//   weak   : 2個そろい（1ペア・2ペア）＝「リーチ」
 //   none   : 揃い（2個以上）もストレート（S/B）も無い
-// 「変動役」＝フォーダイス(実点=5個合計)／フルハウス(実点=5個合計)／上段(目×個数, 2個以上のみ)。
-// チョイスは常に5以上入る受け皿なので判定に使わない（除外）。
+// ★ランクは「揃えた個数」で決める（目の大小=実点には依存しない）。
+//   1の4個でも6の4個でも strong。プレイヤーの達成感（何個そろえたか）と演出期待度を一致させるため。
+//   旧実装は実点(目×個数や合計)でランク付けしていたため、小さい目を複数キープすると演出が出にくかった。
+// 「変動役」＝フォーダイス／フルハウス／上段(目×個数, 2個以上のみ)。チョイスは判定に使わない（除外）。
 
 // ストレートの run を構成するダイス（見せ札の端伸ばし/穴埋め用）
 export interface RunDie { index: number; value: DieValue }
@@ -97,14 +99,6 @@ export type ScoringRole =
 const RANK_ORDER: DisplayRank[] = ["none", "weak", "mid", "strong", "max"];
 export function rankIndex(r: DisplayRank): number { return RANK_ORDER.indexOf(r); }
 
-// 変動役の実点 → ランク
-function rankFromVariablePoint(p: number): DisplayRank {
-  if (p >= 28) return "strong";
-  if (p >= 15) return "mid";
-  if (p >= 1)  return "weak";
-  return "none";
-}
-
 export function getBestScoringRole(finalValue: DieValue[]): ScoringRole {
   // calcCategoryScore は Die[] を取るため、judging 用に最小の Die[] を組み立てる
   const dice: Die[] = finalValue.map((v, i) => ({ id: i, value: v, kept: false }));
@@ -120,19 +114,22 @@ export function getBestScoringRole(finalValue: DieValue[]): ScoringRole {
   const fourScore = calcCategoryScore("fourOfAKind", dice); // 4個以上→合計, 他0
   const fullScore = calcCategoryScore("fullHouse", dice);   // 3+2ちょうど→合計, 他0
   if (fourScore > 0) {
+    // 4個そろい（フォーダイス）= strong（目の大小によらず）
     const n = ([1, 2, 3, 4, 5, 6] as DieValue[]).find(v => counts[v] === 4)!;
-    variable = { type: "fourDice", n, rank: rankFromVariablePoint(fourScore) };
+    variable = { type: "fourDice", n, rank: "strong" };
   } else if (fullScore > 0) {
+    // フルハウス（3+2）= strong
     const a = ([1, 2, 3, 4, 5, 6] as DieValue[]).find(v => counts[v] === 3)!;
     const b = ([1, 2, 3, 4, 5, 6] as DieValue[]).find(v => counts[v] === 2)!;
-    variable = { type: "fullHouse", a, b, rank: rankFromVariablePoint(fullScore) };
+    variable = { type: "fullHouse", a, b, rank: "strong" };
   } else {
-    // 上段：同じ目が2個以上ある目のうち「目×個数」が最大の目を採用（1個だけは揃い扱いしない）
-    let bestN: DieValue | null = null, bestP = 0;
+    // 上段：同じ目が2個以上ある目のうち「目×個数」が最大の目を採用（見せ札対象の目を決めるため）。
+    // ランクは揃えた個数で決定：3個=mid（リーチ達成）／2個=weak（リーチ）。
+    let bestN: DieValue | null = null, bestP = 0, bestCount = 0;
     for (const v of [1, 2, 3, 4, 5, 6] as DieValue[]) {
-      if (counts[v] >= 2 && v * counts[v] > bestP) { bestP = v * counts[v]; bestN = v; }
+      if (counts[v] >= 2 && v * counts[v] > bestP) { bestP = v * counts[v]; bestN = v; bestCount = counts[v]; }
     }
-    if (bestN) variable = { type: "upper", n: bestN, rank: rankFromVariablePoint(bestP) };
+    if (bestN) variable = { type: "upper", n: bestN, rank: bestCount >= 3 ? "mid" : "weak" };
   }
 
   // ストレート（固定ランク）。run を構成するダイス（index/値）を持たせる。

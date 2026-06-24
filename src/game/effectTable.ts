@@ -81,52 +81,63 @@ export interface EffectDraw {
   variant?: EffectVariant
 }
 
-// 役ランク → エントリ配列（暫定値・合計100/行）
-// flip は軽い・低信頼度で「なし以外」に広く薄く出す（弱にも出る＝ガセあり、信頼度<100%）。
-// ※cupHide はテーブルから外し、「4キープ再振り限定」の独立抽選で発火する（drawIndependentCupHide）。
-//   テーブルに cupHide を入れない代わりに、その分は none に戻している（none＝素直）。
+// 役ランク → エントリ配列（合計100/行）。
+//
+// ★信頼度演出システム：演出の「種類」が結果の良し悪し（当たり=mid以上=3個そろい以上）の tell になる。
+//   信頼度 = P(当たり | その演出が出た)。各演出のランク間の出方の差でこれを作る。
+//   - 低信頼（flip 15%）= weak（ペア）に集中。出ても「伸びてない」合図。
+//   - 高信頼（thunder_v2 90%）= strong に集中。たまにペアにガセで漏らして<100%にする。
+//   目標信頼度: flip15 / doubleFlip30 / windmill35 / slashB65 / fire65 / thunder75 / thunder_v2 90。
+//   ※信頼度はランク出現頻度に依存するので概算。実測（ログ stagingCounts）で微調整する。
+//
+// ★variant（success=目が書き換わる / miss=書き換えない）も tell の一部：
+//   当たり（mid/strong）では success（書き換えて当たりを開示）、
+//   ガセ（weak の flashy 演出）では miss（書き換わらない＝「炎出たのに変化なし」）。
+//   → 「目が書き換わったら当たり」というサブ tell が成立する。
+//
+// ※cupHide はテーブル外（4キープ再振り限定の独立抽選 drawIndependentCupHide）。
+// ※全体のノイズ量（演出の出る総量）は各 none 重みで調整。信頼度（ランク間比）を保ったまま増減可。
 export const EFFECT_TABLE: Record<DisplayRank, EffectTableEntry[]> = {
+  // 役なし（ペアも無し）＝素直のみ。演出を出さない。
   none: [
-    { effectId: 'none',                        weight: 100 },
-    // ★none 行は「なし以外＝素直のみ」。success / flip / thunder は入れない。
-    // slashB も none 行では出さない（化けのない役なし状態には不釣り合い）。
+    { effectId: 'none', weight: 100 },
   ],
+  // 1ペア（2個）＝リーチ。演出は出る（リーチ感）が、ほぼ flip（低信頼）。flashy はガセ(miss)で少量だけ漏らす。
   weak: [
-    { effectId: 'none',                        weight: 96 },
-    { effectId: 'flip',    variant: 'success', weight:  2 },
-    { effectId: 'slashB',  variant: 'success', weight:  2 },
+    { effectId: 'none',                          weight: 68 },
+    { effectId: 'flip',       variant: 'success', weight: 11 },
+    { effectId: 'doubleFlip', variant: 'success', weight:  4 },
+    { effectId: 'windmill',   variant: 'success', weight:  3 },
+    { effectId: 'slashB',     variant: 'miss',    weight:  4 },
+    { effectId: 'fire',       variant: 'miss',    weight:  6 },
+    { effectId: 'thunder',    variant: 'miss',    weight:  3.5 },
+    { effectId: 'thunder_v2', variant: 'miss',    weight:  0.5 },
   ],
+  // 3個そろい / S.ストレート＝当たり。slashB/fire 主体、雷も混じる。書き換え(success)で開示。
   mid: [
-    { effectId: 'none',       variant: undefined,  weight: 75 },
-    { effectId: 'flip',       variant: 'success',  weight: 10 },
-    { effectId: 'thunder',    variant: 'success',  weight:  6 },
-    { effectId: 'fire',       variant: 'success',  weight:  3 },
-    { effectId: 'fire',       variant: 'miss',     weight:  1 },
-    { effectId: 'slashB',     variant: 'success',  weight:  2 },
-    { effectId: 'doubleFlip', variant: 'success',  weight:  2 },
-    { effectId: 'windmill',   variant: 'success',  weight:  1 },
+    { effectId: 'none',                          weight: 62 },
+    { effectId: 'flip',       variant: 'success', weight:  2 },
+    { effectId: 'doubleFlip', variant: 'success', weight:  2 },
+    { effectId: 'windmill',   variant: 'success', weight:  3 },
+    { effectId: 'slashB',     variant: 'success', weight: 10 },
+    { effectId: 'fire',       variant: 'success', weight: 10 },
+    { effectId: 'thunder',    variant: 'success', weight:  6 },
+    { effectId: 'thunder_v2', variant: 'success', weight:  5 },
   ],
+  // 4個 / フルハウス / B.ストレート＝強い当たり。雷・雷v2 主体（高信頼）。flip はほぼ出ない。
   strong: [
-    { effectId: 'none',       variant: undefined,  weight: 57 },
-    { effectId: 'flip',       variant: 'success',  weight: 12 },
-    { effectId: 'thunder',    variant: 'success',  weight: 11 },
-    { effectId: 'fire',       variant: 'success',  weight:  6 },
-    { effectId: 'fire',       variant: 'miss',     weight:  2 },
-    { effectId: 'thunder_v2', variant: 'success',  weight:  4 },
-    { effectId: 'slashB',     variant: 'success',  weight:  3 },
-    { effectId: 'doubleFlip', variant: 'success',  weight:  3 },
-    { effectId: 'windmill',   variant: 'success',  weight:  2 },
+    { effectId: 'none',                          weight: 60 },
+    { effectId: 'flip',       variant: 'success', weight:  1 },
+    { effectId: 'doubleFlip', variant: 'success', weight:  1 },
+    { effectId: 'windmill',   variant: 'success', weight:  1 },
+    { effectId: 'slashB',     variant: 'success', weight:  4 },
+    { effectId: 'fire',       variant: 'success', weight:  8 },
+    { effectId: 'thunder',    variant: 'success', weight: 13 },
+    { effectId: 'thunder_v2', variant: 'success', weight: 12 },
   ],
+  // ヨット＝max。playStaging が光の柱を強制するためこの行は実戦では未到達。安全用フォールバック。
   max: [
-    { effectId: 'none',       variant: undefined,  weight: 35 },
-    { effectId: 'flip',       variant: 'success',  weight:  9 },
-    { effectId: 'thunder',    variant: 'success',  weight: 14 },
-    { effectId: 'fire',       variant: 'success',  weight:  8 },
-    { effectId: 'fire',       variant: 'miss',     weight:  2 },
-    { effectId: 'thunder_v2', variant: 'success',  weight: 22 },
-    { effectId: 'slashB',     variant: 'success',  weight:  3 },
-    { effectId: 'doubleFlip', variant: 'success',  weight:  4 },
-    { effectId: 'windmill',   variant: 'success',  weight:  3 },
+    { effectId: 'thunder_v2', variant: 'success', weight: 100 },
   ],
 }
 
@@ -147,16 +158,21 @@ export function drawIndependentCupHide(rng: () => number = Math.random): EffectD
 // 投入時に役が確定していないため、ランクに依存しない固定確率で選ぶ。
 // 全投入の少数に出現する「当たり感」として機能させる。
 export type ThrowEffectId = 'none' | 'slowA' | 'slowB' | 'fake'
-const THROW_PROB: { id: ThrowEffectId; weight: number }[] = [
-  { id: 'none',  weight: 85 },
-  { id: 'slowA', weight:  8 },
-  { id: 'slowB', weight:  5 },
-  { id: 'fake',  weight:  2 },
-]
-export function drawThrowEffect(rng: () => number = Math.random): ThrowEffectId {
-  const total = THROW_PROB.reduce((s, e) => s + e.weight, 0)
+// 投入演出も staging と同じく「信頼度の tell」。投入時点で出目は確定済み（公正乱数で先に決定）なので
+// host は結果のランクを知った上で投入演出を選べる。目標信頼度: slowA 65 / fake 65 / slowB 80。
+// staging より発火率は控えめ（投入演出が出たら staging は抑制＝1ロール1 tell）。
+const THROW_TABLE: Record<DisplayRank, { id: ThrowEffectId; weight: number }[]> = {
+  none:   [{ id: 'none', weight: 100 }],
+  weak:   [{ id: 'none', weight: 94.2 }, { id: 'slowA', weight: 2.5 }, { id: 'fake', weight: 2.5 }, { id: 'slowB', weight: 0.8 }],
+  mid:    [{ id: 'none', weight: 91   }, { id: 'slowA', weight: 3.5 }, { id: 'fake', weight: 3.5 }, { id: 'slowB', weight: 2   }],
+  strong: [{ id: 'none', weight: 86   }, { id: 'slowA', weight: 4   }, { id: 'fake', weight: 4   }, { id: 'slowB', weight: 6   }],
+  max:    [{ id: 'none', weight: 100 }],  // ヨットは光の柱に集中（投入煽りは入れない）
+}
+export function drawThrowEffect(rank: DisplayRank, rng: () => number = Math.random): ThrowEffectId {
+  const row = THROW_TABLE[rank]
+  const total = row.reduce((s, e) => s + e.weight, 0)
   let r = rng() * total
-  for (const e of THROW_PROB) {
+  for (const e of row) {
     r -= e.weight
     if (r < 0) return e.id
   }

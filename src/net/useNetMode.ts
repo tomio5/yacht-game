@@ -94,7 +94,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     )
     const rank         = getDisplayRank(newFinals)
     const draw         = selectEffectFromTable(rank)
-    const throwEffect  = drawThrowEffect()
+    const throwEffect  = drawThrowEffect(rank)
     const confidenceSE = drawConfidenceSE(maxRoleScore(newFinals))
     const rollMsg: MsgRollResult = {
       type: 'roll_result',

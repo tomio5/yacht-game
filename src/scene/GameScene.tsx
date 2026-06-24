@@ -1045,8 +1045,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       slashBArmedRef.current = false
       showValues = [...finals]; cupIndices = []; swapIndices = []
     } else {
-      // B系統演出（投入演出）: 自動抽選。当選時は見せ目なし・staging なし。
-      const throwDraw = drawThrowEffect()
+      // B系統演出（投入演出）: 結果ランク連動で抽選（tell）。当選時は見せ目なし・staging なし。
+      const throwDraw = drawThrowEffect(getDisplayRank(finals))
       if (throwDraw !== 'none') {
         activeThrowRef.current = throwDraw
         eff = { effectId: 'none', mode: 'none' }
@@ -1158,8 +1158,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       activeThrowRef.current = pendingThrowEffectRef.current as ThrowEffect
       pendingThrowEffectRef.current = 'none'
     } else {
-      const throwDraw = drawThrowEffect()
-      activeThrowRef.current = throwDraw
+      activeThrowRef.current = drawThrowEffect(getDisplayRank(finalsAll))
     }
     if (activeThrowRef.current !== 'none') { eff = { effectId: 'none', mode: 'none' }; slashBArmedRef.current = false }
     // 信頼度音: 観戦側は host 決定値、host/solo はここで抽選
