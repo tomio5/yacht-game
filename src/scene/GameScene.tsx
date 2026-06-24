@@ -869,6 +869,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const pendingStagingRef = useRef(false)         // onStaging が gather 完了前に届いた場合のキュー（観戦側）
   const slashBArmedRef   = useRef(false)         // B系統演出: gathering をスキップするフラグ
   const slashBTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // B系統 force-restore 用
+  // Bug3 fix: gathering→keep_select 遅延タイマーを追跡し resetForNextTurn で確実にキャンセル
+  const gatherTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── プレイログ ──────────────────────────────────
   type LogEntry =
@@ -1145,12 +1147,15 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       eff = { effectId: 'none', mode: 'none' }
       slashBArmedRef.current = false
     }
-    // 投入演出（B系統）: デバッグ強制 or 自動抽選。当選時は見せ目なし・staging cover なし。
+    // 投入演出（B系統）: デバッグ強制 or 自動抽選。観戦側（skipNotify=true）は抽選しない。
     if (debugThrowRef.current !== 'none') {
       activeThrowRef.current = debugThrowRef.current
-    } else {
+    } else if (!skipNotify) {
+      // アクティブプレイヤー側のみ抽選（観戦側は投入演出を独自に出さない）
       const throwDraw = drawThrowEffect()
       activeThrowRef.current = throwDraw
+    } else {
+      activeThrowRef.current = 'none'
     }
     if (activeThrowRef.current !== 'none') { eff = { effectId: 'none', mode: 'none' }; slashBArmedRef.current = false }
     // ヨット時: キープ外ダイスのみからデコイを選ぶ（光の柱で書き換えが見えるように）
@@ -1637,7 +1642,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         setPhase('gathering')
         gatherFieldDice()
         setDieStates([...dieStatesRef.current])
-        window.setTimeout(() => finishGatherToKeepSelect(), GATHER_MS)
+        gatherTimeoutRef.current = window.setTimeout(() => { gatherTimeoutRef.current = null; finishGatherToKeepSelect() }, GATHER_MS)
       })
     }
     start()
@@ -1752,10 +1757,10 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
             enterKeepSelect()
           }, SLASH_SEG_STARTS)
         } else {
-          window.setTimeout(() => finishGatherToKeepSelect(), GATHER_MS)
+          gatherTimeoutRef.current = window.setTimeout(() => { gatherTimeoutRef.current = null; finishGatherToKeepSelect() }, GATHER_MS)
         }
       } else {
-        window.setTimeout(() => finishGatherToKeepSelect(), GATHER_MS)
+        gatherTimeoutRef.current = window.setTimeout(() => { gatherTimeoutRef.current = null; finishGatherToKeepSelect() }, GATHER_MS)
       }
 
       setDieStates([...dieStatesRef.current])
@@ -1889,6 +1894,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setGravityScale(1)
     setCpuThinking(false)
     setLastCpuCat(null)
+    // Bug3 fix: 観戦中の gathering タイマーが残っていたらキャンセル（ターン切替で keep_select に入るのを防ぐ）
+    if (gatherTimeoutRef.current) { clearTimeout(gatherTimeoutRef.current); gatherTimeoutRef.current = null }
   }, [])
 
   // ── ネットモード サブスクリプション ──────────────────
@@ -2094,10 +2101,12 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   useEffect(() => {
     if (!netMode) return
     const u1 = netMode.onCupThrown(() => {
-      cupRef.current?.triggerSyncRoll()   // autoRoll=false で開始。releaseThrow() 待ち
+      // Bug2 fix: 自ターン中に届いた遅延パケットで自カップが起動しないよう観戦側のみ受け付ける
+      if (!netMode.isMyTurn()) cupRef.current?.triggerSyncRoll()
     })
     const u2 = netMode.onCupReleased(() => {
-      cupRef.current?.releaseThrow()      // アクティブ側の pointerup に合わせて解放
+      // Bug2 fix: 同上
+      if (!netMode.isMyTurn()) cupRef.current?.releaseThrow()
     })
     return () => { u1(); u2() }
   }, [netMode])
