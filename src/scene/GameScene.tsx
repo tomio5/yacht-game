@@ -2726,7 +2726,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       {/* ── プレイ中ログ操作（常時・左下小ボタン） ── */}
       {!gameOver && (
         <div style={{
-          position: 'absolute', left: 10, bottom: 10, zIndex: 20,
+          position: 'absolute', left: 10, top: 10, zIndex: 20,
           display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start',
         }}>
           {netMode?.role === 'guest' ? (
