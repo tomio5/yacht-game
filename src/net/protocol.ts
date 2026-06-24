@@ -129,6 +129,15 @@ export interface MsgReady {
   type: 'ready'
 }
 
+/** プレイログ転送。ゲスト→ホストへ自分のログ全体を送り、ホスト側で両者ぶんを突き合わせ・一括DLするため。
+ *  entries は GameScene の LogEntry[]（プロトコル層では型を固定せず unknown 配列で運ぶ）。 */
+export interface MsgLog {
+  type: 'log'
+  role: 'host' | 'guest'
+  startedAt: string
+  entries: unknown[]
+}
+
 // ── ユニオン型 ───────────────────────────────────────────
 
 /** ホスト→ゲスト方向のメッセージ */
@@ -146,6 +155,7 @@ export type HostToGuest =
   | MsgCupThrown
   | MsgCupReleased
   | MsgReady
+  | MsgLog
 
 /** ゲスト→ホスト方向のメッセージ */
 export type GuestToHost =
@@ -157,6 +167,7 @@ export type GuestToHost =
   | MsgCupThrown
   | MsgCupReleased
   | MsgReady
+  | MsgLog
 
 /** 受信データのナローイング用型ガード */
 export function isHostToGuest(data: unknown): data is HostToGuest {

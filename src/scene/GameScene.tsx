@@ -877,6 +877,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     | { type: 'record';  turn: 'player'|'cpu'; roundNo: number; category: string; points: number }
   const gameLogRef      = useRef<LogEntry[]>([])
   const gameStartedAtRef = useRef(new Date().toISOString())
+  // ホストが受信したゲストのログ（一括DL用）。ゲスト→ホストへ sendLog で届く。
+  const guestLogRef     = useRef<{ startedAt: string; entries: unknown[] } | null>(null)
+  const [guestLogGot, setGuestLogGot] = useState(false)  // ホストUI: ゲストログ受信表示
   const rollNoRef           = useRef(0)   // ターン内のロール番号（1〜3）
   const isFirstRollOfTurnRef = useRef(true)  // ターン最初の1投目かどうか（0キープ再振りの誤判定防止用）
   const roundNoRef      = useRef(0)   // ゲーム全体のラウンド番号（1〜13）
@@ -2042,7 +2045,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       gameLogRef.current = []
       rollNoRef.current  = 0
       roundNoRef.current = 0
+      guestLogRef.current = null
+      setGuestLogGot(false)
       setTurn('cpu')   // ホスト先攻 → ゲストは相手ターン待ち
+    }))
+
+    // ホスト: ゲストから送られたプレイログを受信して保持（一括DLに同梱）
+    unsubs.push(netMode.onLog((role, startedAt, entries) => {
+      if (role === 'guest') { guestLogRef.current = { startedAt, entries }; setGuestLogGot(true) }
     }))
 
     return () => unsubs.forEach(u => u())
@@ -2079,6 +2089,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         // 実際に発火した staging 演出の集計（呼び出しフラグ）
         stagingCounts:    tally(e => e.type === 'staging' ? e.effectId : undefined),
       },
+      // ホストがゲストログを受信済みなら同梱（突き合わせ用に1ファイルで完結）
+      guestLog: (netMode?.role === 'host' && guestLogRef.current) ? guestLogRef.current : undefined,
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url  = URL.createObjectURL(blob)
@@ -2088,6 +2100,25 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     a.click()
     URL.revokeObjectURL(url)
   }, [playerSheet, cpuSheet, netMode])
+
+  // ゲスト: 自分のログをホストへ送信（ホスト側で一括DLに同梱される）
+  const [logSent, setLogSent] = useState(false)
+  const sendLogToHost = useCallback(() => {
+    if (netMode?.role !== 'guest') return
+    netMode.sendLog(gameStartedAtRef.current, gameLogRef.current as unknown[])
+    setLogSent(true)
+    window.setTimeout(() => setLogSent(false), 1500)
+  }, [netMode])
+
+  // ゲスト: ゲーム終了時に自動でホストへログ送信（ホストの終了画面DLに間に合うように）。1ゲーム1回だけ。
+  const logAutoSentRef = useRef(false)
+  useEffect(() => {
+    if (gameOver && netMode?.role === 'guest' && !logAutoSentRef.current) {
+      logAutoSentRef.current = true
+      netMode.sendLog(gameStartedAtRef.current, gameLogRef.current as unknown[])
+    }
+    if (!gameOver) logAutoSentRef.current = false   // 次ゲーム用にリセット
+  }, [gameOver, netMode])
 
   const handleGameReset = useCallback((fromNet = false) => {
     setPlayerSheet({ ...EMPTY_SHEET })
@@ -2101,6 +2132,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     gameStartedAtRef.current = new Date().toISOString()
     rollNoRef.current      = 0
     roundNoRef.current     = 0
+    guestLogRef.current    = null
+    setGuestLogGot(false)
 
     if (netMode) {
       if (netMode.role === 'host' && !fromNet) {
@@ -2683,6 +2716,41 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           </>
         )}
       </div>
+
+      {/* ── プレイ中ログ操作（常時・左下小ボタン） ── */}
+      {!gameOver && (
+        <div style={{
+          position: 'absolute', left: 10, bottom: 10, zIndex: 20,
+          display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start',
+        }}>
+          {netMode?.role === 'guest' ? (
+            <>
+              <button
+                style={{ background: 'rgba(26,58,92,0.85)', color: '#fff', border: 'none',
+                  borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'sans-serif' }}
+                onClick={() => { SE.button(); sendLogToHost() }}
+              >
+                {logSent ? '送信しました ✓' : 'ホストへログ送信'}
+              </button>
+              <button
+                style={{ background: 'rgba(0,0,0,0.45)', color: '#cbd5e1', border: 'none',
+                  borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 11, fontFamily: 'sans-serif' }}
+                onClick={() => { SE.button(); downloadLog() }}
+              >
+                自分のログをDL
+              </button>
+            </>
+          ) : (
+            <button
+              style={{ background: 'rgba(26,58,92,0.85)', color: '#fff', border: 'none',
+                borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'sans-serif' }}
+              onClick={() => { SE.button(); downloadLog() }}
+            >
+              ログをDL{netMode?.role === 'host' && guestLogGot ? '（ゲスト分あり）' : ''}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── ゲームオーバー画面 ── */}
       {gameOver && (

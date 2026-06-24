@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef } from 'react'
 import { peerConnection } from './PeerConnection'
-import type { HostToGuest, GuestToHost, MsgRollResult, MsgKeepUpdate, MsgScoreRecorded, MsgGameOver } from './protocol'
+import type { HostToGuest, GuestToHost, MsgRollResult, MsgKeepUpdate, MsgScoreRecorded, MsgGameOver, MsgLog } from './protocol'
 import { rollDieValue } from '../game/dice'
 import { calcCategoryScore, calcTotalScore, getDisplayRank, maxRoleScore } from '../game/scoring'
 import { selectEffectFromTable, drawThrowEffect, drawConfidenceSE } from '../game/effectTable'
@@ -66,6 +66,9 @@ export interface NetMode {
   // カップ解放通知: アクティブ側がポインタを離した瞬間に相手へ送り、観戦側カップも同時解放させる
   notifyCupReleased: () => void
   onCupReleased:     (cb: () => void) => () => void
+  // プレイログ転送（ゲスト→ホスト）。sendLog で自分のログを送り、ホストは onLog で受け取って一括DLに含める
+  sendLog: (startedAt: string, entries: unknown[]) => void
+  onLog:   (cb: (role: 'host'|'guest', startedAt: string, entries: unknown[]) => void) => () => void
 }
 
 // ── フック ───────────────────────────────────────────────
@@ -80,6 +83,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   const stagingCbs     = useRef<Set<(effectId: string) => void>>(new Set())
   const cupThrownCbs    = useRef<Set<() => void>>(new Set())
   const cupReleasedCbs  = useRef<Set<() => void>>(new Set())
+  const logCbs          = useRef<Set<(role: 'host'|'guest', startedAt: string, entries: unknown[]) => void>>(new Set())
   const gameResetCbs    = useRef<Set<() => void>>(new Set())
 
   // ホストが管理するシート（ゲスト→ホストのreq_record受信時に使う）
@@ -200,6 +204,9 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
             break
           case 'cup_released':
             cupReleasedCbs.current.forEach(cb => cb())
+            break
+          case 'log':
+            logCbs.current.forEach(cb => cb(msg.role, msg.startedAt, msg.entries))
             break
           case 'chat':
             break
@@ -363,6 +370,11 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     peerConnection.send({ type: 'cup_released' })
   }, [])
 
+  // プレイログ送信（主にゲスト→ホスト。送信側の role を自動付与）
+  const sendLog = useCallback((startedAt: string, entries: unknown[]) => {
+    peerConnection.send({ type: 'log', role, startedAt, entries } satisfies MsgLog)
+  }, [role])
+
   const sub = <T,>(set: Set<T>) => (cb: T) => {
     set.add(cb)
     return () => { set.delete(cb) }
@@ -372,6 +384,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     role,
     isMyTurn: () => isTurnMineRef.current,
     notifyRoll, notifyKeep, notifyRecord, notifyGameOver, notifyGameReset, notifyStaging, notifyCupThrown, notifyCupReleased,
+    sendLog,
     requestRoll, requestKeep, requestRecord,
     onRollResult:  sub(rollResultCbs.current),
     onKeepUpdate:  sub(keepUpdateCbs.current),
@@ -382,6 +395,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     onStaging:      sub(stagingCbs.current),
     onCupThrown:    sub(cupThrownCbs.current),
     onCupReleased:  sub(cupReleasedCbs.current),
+    onLog:          sub(logCbs.current),
   }
 }
 
