@@ -46,6 +46,7 @@ export interface MsgRollResult {
   effectVariant: string     // 'success'|'miss'|'-'
   displayRank: string       // 役ランク
   throwEffect?: string      // 投入演出ID（'none'/'slowA'/'slowB'/'fake'）
+  confidenceSE?: string     // 信頼度音（'none'/'gako'/'gakokyuin'）host 決定で両側共通
 }
 
 /** キープ状態の更新。ホスト/ゲストどちらかが操作した結果を全員へ */

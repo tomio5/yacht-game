@@ -189,3 +189,13 @@ export function calcTotalScore(sheet: ScoreSheet): number {
   );
   return base + calcUpperBonus(sheet);
 }
+
+// finalValue の出目で「いずれかのカテゴリに記入したときの最高点」。信頼度音（gako/gakokyuin）の対象判定に使う。
+const SCORE_CATEGORIES: Category[] = [
+  "ones", "twos", "threes", "fours", "fives", "sixes",
+  "choice", "fourOfAKind", "fullHouse", "smallStraight", "largeStraight", "yacht",
+];
+export function maxRoleScore(finals: DieValue[]): number {
+  const dice: Die[] = finals.map((value, id) => ({ id, value, kept: false }));
+  return Math.max(...SCORE_CATEGORIES.map((c) => calcCategoryScore(c, dice)));
+}

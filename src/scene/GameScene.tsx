@@ -65,8 +65,9 @@ import type { SlashDieEffectHandle, SlashAssemblePattern } from './SlashDieEffec
 import { DebugPanel } from './DebugPanel'
 import { ScoreSheet } from './ScoreSheet'
 import { computeShowDice } from '../game/showDice'
-import { calcCategoryScore, calcTotalScore, getDisplayRank } from '../game/scoring'
-import { selectEffectFromTable, drawIndependentCupHide, drawThrowEffect } from '../game/effectTable'
+import { calcCategoryScore, calcTotalScore, getDisplayRank, maxRoleScore } from '../game/scoring'
+import { selectEffectFromTable, drawIndependentCupHide, drawThrowEffect, drawConfidenceSE } from '../game/effectTable'
+import type { ConfidenceSE } from '../game/effectTable'
 import type { EffectId } from '../game/effectTable'
 import { cpuKeepDice, cpuChooseCategory } from '../game/cpuAI'
 import { SE, resumeAudio, playDiceHit, playThunderA1SE, playThunderV2SE, playFlipSE, playConfidenceSE, playFireSE, playZangekiSE } from '../game/audio'
@@ -178,19 +179,8 @@ function generateZigzagWaypoints(
 const CPU_READ_MS       = 1000  // CPU が集約後「盤面を読む時間」。経過後に自動で staging を起動（観戦用の間）
 const SLASH_B_TIMEOUT_MS = 6000  // B系統演出のタイムアウト（zigzag 未完了時の force-restore 安全策）
 
-// ── カップ投入時の信頼度演出音（30点以上の役が成立しうるとき確率で鳴らす） ──
-const CONFIDENCE_MIN_SCORE = 30    // この点以上の役が finalValue で成立するなら対象
-const CONFIDENCE_PROB      = 0.5   // 対象時に鳴る確率（実機調整可）
-const ALL_CATEGORIES: Category[] = [
-  'ones', 'twos', 'threes', 'fours', 'fives', 'sixes',
-  'choice', 'fourOfAKind', 'fullHouse', 'smallStraight', 'largeStraight', 'yacht',
-]
-// finalValue で成立する役の最高点が 30 以上なら、確率で信頼度音を1回鳴らす（判定は投入の瞬間に1回）。
-function maybePlayConfidenceSE(finals: DieValue[]): void {
-  const dice = finals.map((value, id) => ({ id, value, kept: false }))
-  const maxScore = Math.max(...ALL_CATEGORIES.map(c => calcCategoryScore(c, dice)))
-  if (maxScore >= CONFIDENCE_MIN_SCORE && Math.random() < CONFIDENCE_PROB) playConfidenceSE()
-}
+// 信頼度演出音（gako / gakokyuin）: 抽選ロジックは effectTable.ts、対象判定 maxRoleScore は scoring.ts に集約
+// （host/guest 両方から使うため共有モジュールへ）。
 
 // ── ダイス各面の法線（local）。値 V を上面にしたとき +Y を向く向き ──
 const TARGET_NORMALS: Record<DieValue, [number, number, number]> = {
@@ -808,6 +798,8 @@ export const STAGING_TEST_EFFECTS = [
 export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const [phase,       setPhase]       = useState<GamePhase>('idle')
   const [turn,        setTurn]        = useState<Turn>('player')
+  const turnRef = useRef<Turn>('player')   // ログ等で最新 turn を参照するため（stale closure 回避）
+  useEffect(() => { turnRef.current = turn }, [turn])
   const [rollsLeft,   setRollsLeft]   = useState(3)
   const [dieStates,   setDieStates]   = useState<DieState[]>([])
   const [dieConfigs,  setDieConfigs]  = useState<DieConfig[]>([])
@@ -839,6 +831,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const [debugThrowUI, setDebugThrowUI] = useState<ThrowEffect>('none')  // DebugPanel 表示用（ref と同期）
   const debugThrowRef   = useRef<ThrowEffect>('none')   // DebugPanel で「次の投入演出」を強制（callback で読む）
   const activeThrowRef  = useRef<ThrowEffect>('none')   // 当該ロールで実行する投入演出
+  const activeConfidenceRef = useRef<ConfidenceSE>('none')  // 当該ロールで鳴らす信頼度音（host 決定→両側共通）
   const slowTimeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [slashActive, setSlashActive] = useState(false)
   const slashKeyRef      = useRef(0)
@@ -874,11 +867,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const gatherTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Bug1 fix: onRollResult(再振り)で受け取った throwEffect を handleReRoll に橋渡しするための一時置き場
   const pendingThrowEffectRef = useRef<string>('none')
+  // 同上: 再振りの信頼度音（host 決定）を handleReRoll skipNotify パスへ橋渡し
+  const pendingConfidenceRef  = useRef<string>('none')
 
   // ── プレイログ ──────────────────────────────────
   type LogEntry =
-    | { type: 'roll';   turn: 'player'|'cpu'; rollNo: number; finalValues: number[]; displayValues: number[]; effectId: string; displayRank: string }
-    | { type: 'record'; turn: 'player'|'cpu'; roundNo: number; category: string; points: number }
+    | { type: 'roll';    turn: 'player'|'cpu'; rollNo: number; finalValues: number[]; displayValues: number[]; effectId: string; displayRank: string; throwEffect: string; confidenceSE: string }
+    | { type: 'staging'; turn: 'player'|'cpu'; effectId: string; finalValues: number[]; displayRank: string }
+    | { type: 'record';  turn: 'player'|'cpu'; roundNo: number; category: string; points: number }
   const gameLogRef      = useRef<LogEntry[]>([])
   const gameStartedAtRef = useRef(new Date().toISOString())
   const rollNoRef           = useRef(0)   // ターン内のロール番号（1〜3）
@@ -963,9 +959,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       setGravityScale(SLOW_B_GRAV)
       slowTimeoutRef.current = setTimeout(() => { setGravityScale(1); slowTimeoutRef.current = null }, SLOW_B_MAXMS)
     }
-    // カップ投入音（旧「パンッ」）は廃止。代わりに finalValue で成立する役の最高点が 30 以上のとき、
-    // CONFIDENCE_PROB の確率で信頼度演出音（gako / gakokyuin 50/50）を鳴らす。判定は1回だけ。
-    maybePlayConfidenceSE(states.map(s => s.finalValue))
+    // カップ投入音（旧「パンッ」）は廃止。代わりに信頼度演出音（gako / gakokyuin）を鳴らす。
+    // 鳴らすか・どちらの音かは抽選済み（activeConfidenceRef）。host 決定値なので両側で同じ音が鳴る。
+    if (activeConfidenceRef.current !== 'none') playConfidenceSE(activeConfidenceRef.current)
   }
 
   // ── 今回の cover（effectId）と swap 有無（mode）を1箇所で解決する ──
@@ -1025,9 +1021,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── 1投目: カップにセット ─────────────────────────
   const preparePendingRoll = useCallback((
     finals: DieValue[], mode: EffectMode, cover: CoverForce = 'auto',
-    netInject?: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode; throwEffect?: string },
+    netInject?: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode; throwEffect?: string; confidenceSE?: string },
   ) => {
     debugModeRef.current = mode; debugCoverRef.current = cover   // 再振りへ引き継ぐため保持
+    // 信頼度音: 観戦側は host 決定値、host/solo はここで抽選（spawn 時に activeConfidenceRef を鳴らす）
+    activeConfidenceRef.current = netInject ? ((netInject.confidenceSE ?? 'none') as ConfidenceSE) : drawConfidenceSE(maxRoleScore(finals))
     let eff: { effectId: CoverId; mode: EffectMode }
     let showValues: DieValue[]
     let cupIndices: number[], swapIndices: number[]
@@ -1089,11 +1087,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setLastResult(res)
     rollNoRef.current = 1
     isFirstRollOfTurnRef.current = false   // 1投目完了 → 次の onRollResult は再振り扱い
-    gameLogRef.current.push({ type: 'roll', turn, rollNo: 1, finalValues: finals, displayValues: showValues, effectId: eff.effectId, displayRank: getDisplayRank(finals) })
+    gameLogRef.current.push({ type: 'roll', turn, rollNo: 1, finalValues: finals, displayValues: showValues, effectId: eff.effectId, displayRank: getDisplayRank(finals), throwEffect: activeThrowRef.current, confidenceSE: activeConfidenceRef.current })
     setRollsLeft(2)
     // ネットモード（ホスト）: ロール結果をゲストへ送信 → 両者ともカップ自動投入
     // inject 側（観戦）は notifyRoll しない（ループ防止）
-    if (!netInject) netMode?.notifyRoll(finals, showValues, eff.effectId, effMode, [], 2, activeThrowRef.current)
+    if (!netInject) netMode?.notifyRoll(finals, showValues, eff.effectId, effMode, [], 2, activeThrowRef.current, activeConfidenceRef.current)
     // 観戦側は onCupThrown 受信時に triggerAutoRoll するため、ここでは何もしない
     pendingSpawnRef.current = { states, cupIndices, swapIndices }
     // (A) ターン開始の最初の投入用にカップへ5個用意（setRollReady が中身を表示） */
@@ -1164,6 +1162,13 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       activeThrowRef.current = throwDraw
     }
     if (activeThrowRef.current !== 'none') { eff = { effectId: 'none', mode: 'none' }; slashBArmedRef.current = false }
+    // 信頼度音: 観戦側は host 決定値、host/solo はここで抽選
+    if (skipNotify) {
+      activeConfidenceRef.current = pendingConfidenceRef.current as ConfidenceSE
+      pendingConfidenceRef.current = 'none'
+    } else {
+      activeConfidenceRef.current = drawConfidenceSE(maxRoleScore(finalsAll))
+    }
     // ヨット時: キープ外ダイスのみからデコイを選ぶ（光の柱で書き換えが見えるように）
     const keptIdsForDecoy = newStates.filter(s => s.location === 'kept').map(s => s.id)
     const { showValues, cupIndices, swapIndices } = activeThrowRef.current !== 'none'
@@ -1176,11 +1181,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     pendingSpawnRef.current = { states: shownStates, cupIndices, swapIndices }
     lastResultRef.current = { displayValues: sv, finalValues: finalsAll, mode: eff.mode, effectId: eff.effectId }
     rollNoRef.current += 1
-    gameLogRef.current.push({ type: 'roll', turn, rollNo: rollNoRef.current, finalValues: finalsAll, displayValues: sv, effectId: eff.effectId, displayRank: getDisplayRank(finalsAll) })
+    gameLogRef.current.push({ type: 'roll', turn, rollNo: rollNoRef.current, finalValues: finalsAll, displayValues: sv, effectId: eff.effectId, displayRank: getDisplayRank(finalsAll), throwEffect: activeThrowRef.current, confidenceSE: activeConfidenceRef.current })
     // ネットモード（ホスト）: 再振り結果をゲストへ送信
     // skipNotify=true の場合はホストが観戦中（onRollResult 経由）= hostProcessGuestRoll が既に送信済み
     const keptIdsAfterReroll = newStates.filter(s => s.location === 'kept').map(s => s.id)
-    if (!skipNotify) netMode?.notifyRoll(finalsAll, sv, eff.effectId, eff.mode, keptIdsAfterReroll, Math.max(0, rollNoRef.current - 1), activeThrowRef.current)
+    if (!skipNotify) netMode?.notifyRoll(finalsAll, sv, eff.effectId, eff.mode, keptIdsAfterReroll, Math.max(0, rollNoRef.current - 1), activeThrowRef.current, activeConfidenceRef.current)
     // ワープ: 非キープは即フィールドから消え、カップ内(count個)の中身として出現
     dieStatesRef.current = shownStates
     setDieStates(shownStates)
@@ -1568,6 +1573,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const finals = dieStatesRef.current.map(s => s.finalValue) as DieValue[]
     const isYacht = finals.length === 5 && finals.every(v => v === finals[0])
     if (isYacht || forced === 'yacht') {
+      gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: 'yacht', finalValues: finals, displayRank: getDisplayRank(finals) })
       setPhase('staging')
       bgm.playGrace()
       yachtKeyRef.current += 1
@@ -1575,8 +1581,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       return 'yacht'
     }
     // 通常 staging。forced 指定（観戦側）はそれを使い、未指定（アクティブ側）は抽選。
-    setPhase('staging')
     const effect = (forced ?? selectStagingEffect()) as StagingEffect
+    gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: effect, finalValues: finals, displayRank: getDisplayRank(finals) })
+    setPhase('staging')
     stagingPlayers.current[effect](() => {
       commitReveal()   // swap 対象を final で確定（キープ/アンキープが final 面に）
       setPhase('keep_select')
@@ -1932,11 +1939,12 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       dieConfigsRef.current = []
       setDieConfigs([])
       // ホストが決定した表示値・演出IDを inject として受け取る（自/観戦ともに共通）
-      const inject: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode; throwEffect: string } = {
+      const inject: { displayValues: DieValue[]; effectId: CoverId; effectVariant: EffectMode; throwEffect: string; confidenceSE: string } = {
         displayValues: r.displayValues as DieValue[],
         effectId:      r.effectId as CoverId,
         effectVariant: r.effectVariant as EffectMode,
         throwEffect:   r.throwEffect ?? 'none',
+        confidenceSE:  r.confidenceSE ?? 'none',
       }
       if (isFirstRollOfTurnRef.current) {
         // 1投目: inject を渡してローカル抽選をスキップ（isFirstRollOfTurnRef は preparePendingRoll 内で false にセット）
@@ -1949,8 +1957,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, finalValues: finals, displayValues: finals }
         }
-        // Bug1 fix: ホスト決定の throwEffect を handleReRoll skipNotify パスへ橋渡し
+        // Bug1 fix: ホスト決定の throwEffect / 信頼度音を handleReRoll skipNotify パスへ橋渡し
         pendingThrowEffectRef.current = inject.throwEffect
+        pendingConfidenceRef.current  = inject.confidenceSE
         handleReRoll(false, true)
         // handleReRoll が lastResultRef を上書きするので、その後に inject の effectId を反映
         if (lastResultRef.current) {
@@ -2042,14 +2051,18 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   // ── ゲームリセット ──────────────────────────────
   const downloadLog = useCallback(() => {
-    const effectCounts: Record<string, number> = {}
-    gameLogRef.current.filter(e => e.type === 'roll').forEach(e => {
-      const eid = (e as Extract<typeof e, { type: 'roll' }>).effectId
-      effectCounts[eid] = (effectCounts[eid] ?? 0) + 1
-    })
+    // 各フラグの出現回数を集計（演出デシンク調査・バランス確認用）
+    const tally = (pick: (e: LogEntry) => string | undefined) => {
+      const m: Record<string, number> = {}
+      gameLogRef.current.forEach(e => { const k = pick(e); if (k) m[k] = (m[k] ?? 0) + 1 })
+      return m
+    }
+    const rollEff = (e: LogEntry) => e.type === 'roll' ? e.effectId : undefined
     const data = {
       startedAt: gameStartedAtRef.current,
       endedAt:   new Date().toISOString(),
+      // 役割: 演出が片方しか出ない等の調査時、host/guest 双方のログを突き合わせるために記録
+      role:      netMode ? netMode.role : 'solo',
       entries:   gameLogRef.current,
       summary: {
         playerTotal: calcTotalScore(playerSheet),
@@ -2058,7 +2071,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
                      calcTotalScore(playerSheet) < calcTotalScore(cpuSheet) ? 'cpu' : 'draw',
         playerSheet,
         cpuSheet,
-        effectCounts,
+        // roll の cover 演出ID 集計（従来互換）
+        effectCounts:     tally(rollEff),
+        // 投入演出（スロー/フェイク）集計
+        throwCounts:      tally(e => e.type === 'roll' ? e.throwEffect : undefined),
+        // 信頼度音（gako/gakokyuin）集計
+        confidenceCounts: tally(e => e.type === 'roll' ? e.confidenceSE : undefined),
+        // 実際に発火した staging 演出の集計（呼び出しフラグ）
+        stagingCounts:    tally(e => e.type === 'staging' ? e.effectId : undefined),
       },
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -2068,7 +2088,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     a.download = `yacht-log-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`
     a.click()
     URL.revokeObjectURL(url)
-  }, [playerSheet, cpuSheet])
+  }, [playerSheet, cpuSheet, netMode])
 
   const handleGameReset = useCallback((fromNet = false) => {
     setPlayerSheet({ ...EMPTY_SHEET })

@@ -294,9 +294,10 @@ export const playFlipSE      = () => playFileSE('/sounds/jump.wav',     FLIP_SE_
 export const playFireSE = (phase: 1 | 2 | 3) =>
   playFileSE(`/sounds/fire${phase}.mp3`, FIRE_SE_VOL)
 export const playZangekiSE = () => playFileSE('/sounds/zangeki.wav', ZANGEKI_SE_VOL)
-/** 30点以上 確定時の信頼度演出音（gako / gakokyuin を 50/50）。発火確率の判定は呼び出し側で行う。 */
-export const playConfidenceSE = () =>
-  playFileSE(Math.random() < 0.5 ? '/sounds/gako.wav' : '/sounds/gakokyuin.wav', CONFIDENCE_SE_VOL)
+/** 30点以上 確定時の信頼度演出音。鳴らすか・どちらの音か（gako/gakokyuin）は呼び出し側で決定する
+ *  （ネット対戦では host が決めて両側で同じ音を鳴らすため。乱数をここに置くと左右でズレる）。 */
+export const playConfidenceSE = (which: 'gako' | 'gakokyuin') =>
+  playFileSE(`/sounds/${which}.wav`, CONFIDENCE_SE_VOL)
 
 /** デバッグ試聴用: 任意のファイルSEを鳴らす（SEトグルに関係なく） */
 export function playFileSEForce(url: string): void {

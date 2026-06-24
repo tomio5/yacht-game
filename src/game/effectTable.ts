@@ -163,6 +163,17 @@ export function drawThrowEffect(rng: () => number = Math.random): ThrowEffectId 
   return 'none'
 }
 
+// ── 信頼度演出音（gako / gakokyuin）の抽選 ──────────────────
+// finalValue で成立する役の最高点が CONFIDENCE_MIN_SCORE 以上のとき、CONFIDENCE_PROB の確率で
+// どちらかの音を1回鳴らす。乱数は host で1回だけ引き、両側で同じ結果を使う（左右で音がズレないように）。
+export type ConfidenceSE = 'none' | 'gako' | 'gakokyuin'
+export const CONFIDENCE_MIN_SCORE = 30
+export const CONFIDENCE_PROB      = 0.5
+export function drawConfidenceSE(maxScore: number, rng: () => number = Math.random): ConfidenceSE {
+  if (maxScore < CONFIDENCE_MIN_SCORE || rng() >= CONFIDENCE_PROB) return 'none'
+  return rng() < 0.5 ? 'gako' : 'gakokyuin'
+}
+
 /**
  * 役ランクの行から weight 正規化で 1 エントリを抽選する。
  * @param rank getDisplayRank の結果
