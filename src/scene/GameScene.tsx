@@ -1090,7 +1090,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setLastResult(res)
     rollNoRef.current = 1
     isFirstRollOfTurnRef.current = false   // 1投目完了 → 次の onRollResult は再振り扱い
-    gameLogRef.current.push({ type: 'roll', turn, rollNo: 1, finalValues: finals, displayValues: showValues, effectId: eff.effectId, displayRank: getDisplayRank(finals), throwEffect: activeThrowRef.current, confidenceSE: activeConfidenceRef.current })
+    gameLogRef.current.push({ type: 'roll', turn: turnRef.current, rollNo: 1, finalValues: finals, displayValues: showValues, effectId: eff.effectId, displayRank: getDisplayRank(finals), throwEffect: activeThrowRef.current, confidenceSE: activeConfidenceRef.current })
     setRollsLeft(2)
     // ネットモード（ホスト）: ロール結果をゲストへ送信 → 両者ともカップ自動投入
     // inject 側（観戦）は notifyRoll しない（ループ防止）
@@ -1183,7 +1183,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     pendingSpawnRef.current = { states: shownStates, cupIndices, swapIndices }
     lastResultRef.current = { displayValues: sv, finalValues: finalsAll, mode: eff.mode, effectId: eff.effectId }
     rollNoRef.current += 1
-    gameLogRef.current.push({ type: 'roll', turn, rollNo: rollNoRef.current, finalValues: finalsAll, displayValues: sv, effectId: eff.effectId, displayRank: getDisplayRank(finalsAll), throwEffect: activeThrowRef.current, confidenceSE: activeConfidenceRef.current })
+    gameLogRef.current.push({ type: 'roll', turn: turnRef.current, rollNo: rollNoRef.current, finalValues: finalsAll, displayValues: sv, effectId: eff.effectId, displayRank: getDisplayRank(finalsAll), throwEffect: activeThrowRef.current, confidenceSE: activeConfidenceRef.current })
     // ネットモード（ホスト）: 再振り結果をゲストへ送信
     // skipNotify=true の場合はホストが観戦中（onRollResult 経由）= hostProcessGuestRoll が既に送信済み
     const keptIdsAfterReroll = newStates.filter(s => s.location === 'kept').map(s => s.id)
@@ -1966,6 +1966,12 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         // handleReRoll が lastResultRef を上書きするので、その後に inject の effectId を反映
         if (lastResultRef.current) {
           lastResultRef.current = { ...lastResultRef.current, effectId: inject.effectId, mode: inject.effectVariant }
+        }
+        // ログ修正: handleReRoll はローカル捨て抽選の effectId を記録するため、host 決定値で上書き
+        // （観戦側のログを host と一致させる。staging エントリは実演出と一致しているが roll は要修正）
+        for (let i = gameLogRef.current.length - 1; i >= 0; i--) {
+          const e = gameLogRef.current[i]
+          if (e.type === 'roll') { e.effectId = inject.effectId; break }
         }
         // ホスト送信の displayValues でフィールドダイスの表示を上書き（ローカル再計算と食い違い防止）
         if (pendingSpawnRef.current) {
