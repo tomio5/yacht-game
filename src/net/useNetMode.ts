@@ -55,8 +55,8 @@ export interface NetMode {
   onTurnChange:   (cb: (isMyTurn: boolean) => void) => () => void
   onGameOver:     (cb: (myTotal: number, oppTotal: number, winner: 'me'|'opponent'|'draw') => void) => () => void
   // staging 演出トリガー通知: アクティブ側が起動したとき相手へ送信、受信側は即再生
-  notifyStaging:  () => void
-  onStaging:      (cb: () => void) => () => void
+  notifyStaging:  (effectId: string) => void
+  onStaging:      (cb: (effectId: string) => void) => () => void
   // ホストがゲームリセットしたときゲスト側で呼ばれる
   onGameReset:    (cb: () => void) => () => void
   // カップ投入開始通知: アクティブ側がカップをクリックした瞬間に相手へ送り、観戦側カップを連動させる
@@ -76,7 +76,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   const scoreUpdateCbs = useRef<Set<(by: 'me'|'opponent', cat: Category, pts: number, my: ScoreSheet, opp: ScoreSheet) => void>>(new Set())
   const turnChangeCbs  = useRef<Set<(isMyTurn: boolean) => void>>(new Set())
   const gameOverCbs    = useRef<Set<(myTotal: number, oppTotal: number, winner: 'me'|'opponent'|'draw') => void>>(new Set())
-  const stagingCbs     = useRef<Set<() => void>>(new Set())
+  const stagingCbs     = useRef<Set<(effectId: string) => void>>(new Set())
   const cupThrownCbs    = useRef<Set<() => void>>(new Set())
   const cupReleasedCbs  = useRef<Set<() => void>>(new Set())
   const gameResetCbs    = useRef<Set<() => void>>(new Set())
@@ -190,7 +190,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
             hostProcessGuestRecord(msg.category, guestDiceFinals.current)
             break
           case 'staging':
-            stagingCbs.current.forEach(cb => cb())
+            stagingCbs.current.forEach(cb => cb(msg.effectId))
             break
           case 'cup_thrown':
             cupThrownCbs.current.forEach(cb => cb())
@@ -253,7 +253,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
             break
           }
           case 'staging':
-            stagingCbs.current.forEach(cb => cb())
+            stagingCbs.current.forEach(cb => cb(msg.effectId))
             break
           case 'cup_thrown':
             cupThrownCbs.current.forEach(cb => cb())
@@ -345,8 +345,8 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   }, [role])
 
   // staging トリガー通知: アクティブプレイヤーが演出を起動したとき相手へ送る（双方向）
-  const notifyStaging = useCallback(() => {
-    peerConnection.send({ type: 'staging' })
+  const notifyStaging = useCallback((effectId: string) => {
+    peerConnection.send({ type: 'staging', effectId })
   }, [])
 
   // カップ投入開始通知: アクティブプレイヤーがカップをクリックした瞬間に相手へ送る（双方向）

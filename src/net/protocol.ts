@@ -105,9 +105,12 @@ export interface MsgChat {
   text: string
 }
 
-/** staging 演出トリガー。アクティブプレイヤーが演出を起動した瞬間に相手へ送り、同時再生させる */
+/** staging 演出トリガー。アクティブプレイヤーが演出を起動した瞬間に相手へ送り、同時再生させる。
+ *  effectId は host が実際に再生した演出（flip/thunder/.../yacht）。観戦側はこれを直接再生し、
+ *  自前で再抽選しない（再抽選すると swap/effectId のズレで片側だけ演出が出る不具合になる）。 */
 export interface MsgStaging {
   type: 'staging'
+  effectId: string
 }
 
 /** カップ投入開始。アクティブプレイヤーがカップをクリックした瞬間に相手へ送り、観戦側のカップを連動させる */

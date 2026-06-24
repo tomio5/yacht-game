@@ -867,6 +867,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // 集約完了時に cover ありなら true、staging を1回再生（消費）すると false。集約ごとに1回。
   const stagingArmedRef  = useRef(false)
   const pendingStagingRef = useRef(false)         // onStaging が gather 完了前に届いた場合のキュー（観戦側）
+  const pendingStagingEffectRef = useRef<string>('')  // host が選んだ演出ID（キュー消化時にこれを直接再生）
   const slashBArmedRef   = useRef(false)         // B系統演出: gathering をスキップするフラグ
   const slashBTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // B系統 force-restore 用
   // Bug3 fix: gathering→keep_select 遅延タイマーを追跡し resetForNextTurn で確実にキャンセル
@@ -1560,25 +1561,28 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   // ── staging 再生本体: phase=staging → cover 再生 → keep_select に戻す ──
   // （トリガは「プレイヤー/CPU の操作」。抽選自体は集約直後に済んでおり lastResultRef に保持済み）
-  const playStaging = useCallback(() => {
+  // forced を渡すと抽選せずその演出を再生（観戦側＝host が選んだ演出IDを直接再生するため）。
+  // 戻り値は実際に再生した演出ID（'yacht' 含む）。アクティブ側は notifyStaging でこれを相手へ送る。
+  const playStaging = useCallback((forced?: string): string => {
     // ヨット成立 → staging テーブル抽選をスキップして光の柱演出を起動
     const finals = dieStatesRef.current.map(s => s.finalValue) as DieValue[]
     const isYacht = finals.length === 5 && finals.every(v => v === finals[0])
-    if (isYacht) {
+    if (isYacht || forced === 'yacht') {
       setPhase('staging')
       bgm.playGrace()
       yachtKeyRef.current += 1
       setYachtActive(true)
-      return
+      return 'yacht'
     }
-    // 通常 staging
+    // 通常 staging。forced 指定（観戦側）はそれを使い、未指定（アクティブ側）は抽選。
     setPhase('staging')
-    const effect = selectStagingEffect()
+    const effect = (forced ?? selectStagingEffect()) as StagingEffect
     stagingPlayers.current[effect](() => {
       commitReveal()   // swap 対象を final で確定（キープ/アンキープが final 面に）
       setPhase('keep_select')
       setDieStates([...dieStatesRef.current])
     })
+    return effect
   }, [selectStagingEffect, commitReveal])
 
   // ── 集約完了 → staging を「装填」して keep_select へ直行（自動再生はしない） ──
@@ -1590,13 +1594,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const shouldArm = isYacht || selectStagingEffect() !== 'none'
     stagingArmedRef.current = shouldArm
     enterKeepSelect()
-    // 観戦側: onStaging が gather 完了前に届いていた場合、ここで消化する
-    if (pendingStagingRef.current && shouldArm) {
+    // 観戦側: onStaging が gather 完了前に届いていた場合、ここで消化する。
+    // host が「演出を起動した」事実が真実源なので shouldArm の自前判定では分岐しない
+    // （swap/effectId のローカル再計算ズレで握りつぶす不具合を防ぐ）。host が送った演出IDを直接再生。
+    if (pendingStagingRef.current) {
       pendingStagingRef.current = false
       stagingArmedRef.current = false
-      playStaging()
-    } else {
-      pendingStagingRef.current = false
+      playStaging(pendingStagingEffectRef.current || undefined)
+      pendingStagingEffectRef.current = ''
     }
   }, [selectStagingEffect, enterKeepSelect, playStaging])
 
@@ -1625,8 +1630,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const maybeTriggerStaging = useCallback((): boolean => {
     if (!stagingArmedRef.current) return false
     stagingArmedRef.current = false   // 消費（同じ集約では2回目以降走らない）
-    playStaging()
-    netMode?.notifyStaging()   // 相手側でも同時再生
+    const fx = playStaging()
+    netMode?.notifyStaging(fx)   // 相手側でも同じ演出を同時再生（自前抽選させない）
     return true
   }, [playStaging, netMode])
 
@@ -1892,6 +1897,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     diceSettledRef.current = false
     stagingArmedRef.current = false
     pendingStagingRef.current = false
+    pendingStagingEffectRef.current = ''
     isFirstRollOfTurnRef.current = true
     // 投入演出（スロー）の取り残し防止: 重力を通常へ戻す
     if (slowTimeoutRef.current) { clearTimeout(slowTimeoutRef.current); slowTimeoutRef.current = null }
@@ -2094,14 +2100,16 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── ネット対戦: 相手からの staging シグナルを受信したとき演出を再生 ──
   useEffect(() => {
     if (!netMode) return
-    return netMode.onStaging(() => {
+    return netMode.onStaging((effectId: string) => {
       if (!stagingArmedRef.current) {
-        // gather がまだ完了していない（armedが立っていない）→ キューに積んで gather 完了時に消化
+        // gather がまだ完了していない（armedが立っていない）→ キューに積んで gather 完了時に消化。
+        // host が選んだ演出IDも保持し、消化時にそれを直接再生する。
         pendingStagingRef.current = true
+        pendingStagingEffectRef.current = effectId
         return
       }
       stagingArmedRef.current = false
-      playStaging()
+      playStaging(effectId || undefined)
     })
   }, [netMode, playStaging])
 
