@@ -182,6 +182,13 @@ const SLASH_B_TIMEOUT_MS = 6000  // B系統演出のタイムアウト（zigzag 
 // 信頼度演出音（gako / gakokyuin）: 抽選ロジックは effectTable.ts、対象判定 maxRoleScore は scoring.ts に集約
 // （host/guest 両方から使うため共有モジュールへ）。
 
+// スコアシート内ログボタンの共通スタイル（サウンド欄と同じダーク基調に合わせる）
+const logBtnStyle: React.CSSProperties = {
+  background: '#2d6a2d', color: '#fff', border: 'none',
+  borderRadius: 6, padding: '6px 10px', cursor: 'pointer',
+  fontSize: 11, fontFamily: 'sans-serif', width: '100%',
+}
+
 // ── ダイス各面の法線（local）。値 V を上面にしたとき +Y を向く向き ──
 const TARGET_NORMALS: Record<DieValue, [number, number, number]> = {
   1: [ 0,  1,  0],  6: [ 0, -1,  0],
@@ -2434,6 +2441,38 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         playerLabel={netMode ? (netMode.role === 'host' ? '1P' : '2P') : undefined}
         cpuLabel={netMode ? (netMode.role === 'host' ? '2P' : '1P') : undefined}
         swapColumns={netMode?.role === 'guest'}
+        logSlot={
+          <div style={{
+            background: '#2c1a0a', padding: '7px 8px',
+            display: 'flex', flexDirection: 'column', gap: 5,
+            borderTop: '2px solid #4a3018',
+          }}>
+            <div style={{ fontSize: 8, letterSpacing: 1, color: '#a07850', fontWeight: 'bold' }}>📄 ログ</div>
+            {netMode?.role === 'guest' ? (
+              <>
+                <button
+                  style={logBtnStyle}
+                  onClick={() => { SE.button(); sendLogToHost() }}
+                >
+                  {logSent ? '送信しました ✓' : 'ホストへログ送信'}
+                </button>
+                <button
+                  style={{ ...logBtnStyle, background: '#1e1407', color: '#cbb890', fontSize: 10, padding: '4px 8px' }}
+                  onClick={() => { SE.button(); downloadLog() }}
+                >
+                  自分のログをDL
+                </button>
+              </>
+            ) : (
+              <button
+                style={logBtnStyle}
+                onClick={() => { SE.button(); downloadLog() }}
+              >
+                ログをDL{netMode?.role === 'host' && guestLogGot ? '（ゲスト分あり）' : ''}
+              </button>
+            )}
+          </div>
+        }
       />
 
       {/* ── 振るボタンパネル（dev環境のみ表示） ── */}
@@ -2722,41 +2761,6 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           </>
         )}
       </div>
-
-      {/* ── プレイ中ログ操作（常時・左下小ボタン） ── */}
-      {!gameOver && (
-        <div style={{
-          position: 'absolute', left: 10, top: 10, zIndex: 20,
-          display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start',
-        }}>
-          {netMode?.role === 'guest' ? (
-            <>
-              <button
-                style={{ background: 'rgba(26,58,92,0.85)', color: '#fff', border: 'none',
-                  borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'sans-serif' }}
-                onClick={() => { SE.button(); sendLogToHost() }}
-              >
-                {logSent ? '送信しました ✓' : 'ホストへログ送信'}
-              </button>
-              <button
-                style={{ background: 'rgba(0,0,0,0.45)', color: '#cbd5e1', border: 'none',
-                  borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 11, fontFamily: 'sans-serif' }}
-                onClick={() => { SE.button(); downloadLog() }}
-              >
-                自分のログをDL
-              </button>
-            </>
-          ) : (
-            <button
-              style={{ background: 'rgba(26,58,92,0.85)', color: '#fff', border: 'none',
-                borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'sans-serif' }}
-              onClick={() => { SE.button(); downloadLog() }}
-            >
-              ログをDL{netMode?.role === 'host' && guestLogGot ? '（ゲスト分あり）' : ''}
-            </button>
-          )}
-        </div>
-      )}
 
       {/* ── ゲームオーバー画面 ── */}
       {gameOver && (

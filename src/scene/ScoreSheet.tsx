@@ -69,6 +69,7 @@ export interface ScoreSheetProps {
   playerLabel?:  string    // default "YOU"
   cpuLabel?:     string    // default "CPU"
   swapColumns?:  boolean   // true のとき左=cpuLabel(1P), 右=playerLabel(2P) で表示
+  logSlot?:      React.ReactNode  // 総合得点とサウンドの間に差し込むUI（ログDL/送信ボタン等）
 }
 
 // ── ダイスバッジ（CSS で描画）──
@@ -137,7 +138,7 @@ export function ScoreSheet({
   playerSheet, cpuSheet, currentFinals, canRecord, onRecord,
   turn, cpuThinking = false,
   playerLabel = 'YOU', cpuLabel = 'CPU',
-  swapColumns = false,
+  swapColumns = false, logSlot,
 }: ScoreSheetProps) {
   const [avatar,     setAvatar]     = useState('🐶')
   const [showPicker, setShowPicker] = useState(false)
@@ -474,6 +475,9 @@ export function ScoreSheet({
           </table>
         </div>
       </div>
+
+      {/* ── ログ操作（総合得点とサウンドの間） ── */}
+      {logSlot}
 
       {/* ── 音設定（下段） ── */}
       <AudioControls />
