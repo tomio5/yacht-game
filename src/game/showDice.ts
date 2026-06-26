@@ -26,6 +26,15 @@ export interface ShowDiceResult {
 
 const ALL_VALUES: DieValue[] = [1, 2, 3, 4, 5, 6]
 
+/** value に一致する「キープしていない（＝今回振った）」ダイスの index を返す。無ければ -1。
+ *  再振り時、デコイ（演出の書き換え対象）がキープダイスに乗らないようにするため。 */
+function nonKeptIndexOfValue(finalValues: DieValue[], value: DieValue, keptIds: number[]): number {
+  for (let i = 0; i < finalValues.length; i++) {
+    if (finalValues[i] === value && !keptIds.includes(i)) return i
+  }
+  return -1
+}
+
 /** v と異なる目を1つ返す（なるべく近い値を選んで自然に見せる。ヨット見せ札の従来踏襲用） */
 function differentValue(v: DieValue): DieValue {
   return v === 6 ? (5 as DieValue) : ((v + 1) as DieValue)
@@ -92,6 +101,7 @@ function getStraightDecoy(
   finalValues: DieValue[],
   runDice:     RunDie[],
   rank:        DisplayRank,
+  keptIds:     number[],
 ): { index: number; decoy: DieValue } | null {
   const counts: Record<number, number> = { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 }
   for (const v of finalValues) counts[v]++
@@ -100,8 +110,8 @@ function getStraightDecoy(
   const minV = Math.min(...runVals)
   const maxV = Math.max(...runVals)
 
-  // その目が確実に欠ける（count===1）run die のみ decoy 対象にする
-  const decoyable = runDice.filter(d => counts[d.value] === 1)
+  // その目が確実に欠ける（count===1）run die のうち「今回振った（非キープ）」もののみ decoy 対象にする
+  const decoyable = runDice.filter(d => counts[d.value] === 1 && !keptIds.includes(d.index))
   const holes = decoyable.filter(d => d.value !== minV && d.value !== maxV)  // 内部
   const ends  = decoyable.filter(d => d.value === minV || d.value === maxV)  // 両端
 
@@ -142,7 +152,9 @@ function getSuccessDecoy(
       return { index, decoy: differentValue(finalValues[index]) }
     }
     case 'fourDice': {
-      const index = finalValues.findIndex(v => v === role.n)
+      // 揃いの目 n のうち「今回振った」1個を崩す。全部キープ済みなら崩さない（null）。
+      const index = nonKeptIndexOfValue(finalValues, role.n, keptIds)
+      if (index === -1) return null
       const odd   = finalValues.find(v => v !== role.n)        // 5個目（崩した先がここと一致するとフルハウス化）
       const avoid = new Set<DieValue>([role.n])
       if (odd !== undefined) avoid.add(odd)
@@ -150,13 +162,15 @@ function getSuccessDecoy(
       return decoy === null ? null : { index, decoy }
     }
     case 'fullHouse': {
-      const index = finalValues.findIndex(v => v === role.b)   // ペア側を1個崩す
+      const index = nonKeptIndexOfValue(finalValues, role.b, keptIds)   // ペア側の「今回振った」1個
+      if (index === -1) return null
       const avoid = new Set<DieValue>([role.a, role.b])        // a に崩すと4揃い化／b は無変化
       const decoy = chooseDecoy(finalValues, index, role.rank, avoid)
       return decoy === null ? null : { index, decoy }
     }
     case 'upper': {
-      const index = finalValues.findIndex(v => v === role.n)
+      const index = nonKeptIndexOfValue(finalValues, role.n, keptIds)   // 対象の目の「今回振った」1個
+      if (index === -1) return null
       // 既存の他の目と一致させない（別のペアを偶然作らない）。n 自身も除外。
       const avoid = new Set<DieValue>(finalValues.filter((_, i) => i !== index))
       avoid.add(role.n)
@@ -166,7 +180,7 @@ function getSuccessDecoy(
     case 'bigStraight':
     case 'smallStraight':
       // smallStraight の free die は runDice に含まれないので終始不変
-      return getStraightDecoy(finalValues, role.runDice, role.rank)
+      return getStraightDecoy(finalValues, role.runDice, role.rank, keptIds)
     default:
       return null   // none
   }

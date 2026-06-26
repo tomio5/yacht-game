@@ -1384,10 +1384,11 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const states = dieStatesRef.current
     const finals = states.map(s => s.finalValue)
     const swap   = swapIndicesRef.current
-    const cup    = cupIndicesRef.current
     const refs   = dieRefsRef.current
     const fieldIds = states.filter(s => s.location === 'field').map(s => s.id)
-    const target = swap[0] ?? cup[0] ?? fieldIds[0]
+    // ターゲットは必ずキープ外（swap は非キープのデコイ。無ければ振ったダイス fieldIds[0]）。
+    // cup[0] はキープを含みうるためフォールバックから除外する。
+    const target = swap[0] ?? fieldIds[0]
     const pos    = target != null ? states.find(s => s.id === target)?.worldPos : undefined
     if (target == null || !pos) { onDone(); return }   // 保険
     fireFxKeyRef.current += 1
