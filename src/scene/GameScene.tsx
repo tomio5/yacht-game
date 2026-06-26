@@ -863,6 +863,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const settleNeededRef = useRef(0)
   const settleCountRef  = useRef(0)
   const diceSettledRef  = useRef(false)   // settled フェーズ到達後のスプリアス onSettle を抑制
+  // 安全策: 斜め停止（コックドダイス）で onSleep が来ず settle が揃わないとき、強制的に静置して進行させる
+  const settleWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // staging（flip/thunder）を「プレイヤーの最初の操作」で起動するための装填フラグ。
   // 集約完了時に cover ありなら true、staging を1回再生（消費）すると false。集約ごとに1回。
   const stagingArmedRef  = useRef(false)
@@ -960,6 +962,22 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setDieConfigs(configs)
     setRollKey(k => k + 1)
     setPhase('rolling')
+    // 安全策ウォッチドッグ: 一定時間 settle が揃わなければ（斜め停止等）強制的に静置して進行させる。
+    // スロー演出中は着地が遅れるのでその分を加算する。settle 完了時/リセット時に解除。
+    if (settleWatchdogRef.current) clearTimeout(settleWatchdogRef.current)
+    {
+      const slowExtra = activeThrowRef.current === 'slowB' ? SLOW_B_MAXMS
+                      : activeThrowRef.current === 'slowA' ? SLOW_A_MS : 0
+      settleWatchdogRef.current = setTimeout(() => {
+        settleWatchdogRef.current = null
+        if (diceSettledRef.current) return   // 既に集約へ進んでいれば不要
+        // まだ静止していない field ダイスを強制静置（onSettle が発火し settle 完了 → 集約へ）
+        dieConfigsRef.current.forEach((c, i) => {
+          const st = dieStatesRef.current.find(s => s.id === c.id)
+          if (st?.location === 'field') dieRefsRef.current[i]?.current?.forceSettle()
+        })
+      }, 5000 + slowExtra)
+    }
     // 投入演出スロー: 射出と同時に重力を弱める。slowA は一定時間で復帰、slowB は静止で復帰（安全 timeout 併用）。
     if (slowTimeoutRef.current) { clearTimeout(slowTimeoutRef.current); slowTimeoutRef.current = null }
     if (activeThrowRef.current === 'slowA') {
@@ -1694,6 +1712,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // 全数静止 → 集約。ただし 4キープ再振りで cupHide が抽選/強制されているときは、
     // 集約「前」に pre_gather_cover で振った1個に cup を被せてから gathering へ進む。
     diceSettledRef.current = true
+    if (settleWatchdogRef.current) { clearTimeout(settleWatchdogRef.current); settleWatchdogRef.current = null }
     SE.land()
     // 投入演出スローB: 静止したので重力を通常へ戻す（集約は通常速度）
     if (activeThrowRef.current === 'slowB') {
@@ -1923,6 +1942,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setLastCpuCat(null)
     // Bug3 fix: 観戦中の gathering タイマーが残っていたらキャンセル（ターン切替で keep_select に入るのを防ぐ）
     if (gatherTimeoutRef.current) { clearTimeout(gatherTimeoutRef.current); gatherTimeoutRef.current = null }
+    if (settleWatchdogRef.current) { clearTimeout(settleWatchdogRef.current); settleWatchdogRef.current = null }
   }, [])
 
   // ── ネットモード サブスクリプション ──────────────────

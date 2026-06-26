@@ -63,6 +63,13 @@ const THUNDER_LAND_SPEED  = 1.2   // この速度（全方向）以下が
 const THUNDER_LAND_HOLD   = 0.16  // この秒数続いたら「着地静止」とみなして判定
 const THUNDER_MAX_STRIKES = 3     // 雷の最大回数（自然に正規目が出なければ再雷。超えたら強制整列＝安全策）
 
+// ── 斜め停止（コックドダイス）検知のしきい値 ──
+// 床付近(低y)で移動が止まっている(低linvel)のに上面が整列しない状態がこの秒数続いたら強制静置。
+// 平らに着地したダイス(aligned)はこの経路に入らない＝通常の着地挙動は不変。
+const COCK_Y_MAX   = 0.95   // ダイス中心がこの高さ以下（角・辺・頂点で立った状態を含む）
+const COCK_LIN_MAX = 0.12   // 並進速度がこれ以下（=その場で完全停止。降下中のダイスは十分速いので除外される）
+const COCK_HOLD    = 0.5    // 上記が続いたら「斜め停止」とみなす秒数
+
 // ── 雷ビジュアル A1（対象ダイスに追従する分。すべて実機調整可。物理には一切影響しない） ──
 const THUNDER_GLOW_COLOR     = '#9fd0ff'  // リム発光の色
 const THUNDER_GLOW_SCALE     = 1.08       // リム発光メッシュの拡大率（ダイス輪郭の少し外）
@@ -154,6 +161,12 @@ export interface FieldDieHandle {
   readPose(): { pos: [number, number, number]; rot: [number, number, number] } | null
   /** B系統演出: 4打点ジグザグ移動。pts = [start, wp0..wp3] の5点。segStarts = SE打点タイミング（秒）の5要素配列。省略時は0.44s固定。 */
   zigzagTo(pts: [number, number, number][], finalValue: DieValue, onDone: () => void, segStarts?: number[]): void
+  /**
+   * 安全策: 斜め停止（コックドダイス）等で onSleep が来ず settle しないとき、外部から強制的に
+   * displayValue の面を真上に向けて床に静置し、settle 完了を報告する（ゲーム進行が止まらないように）。
+   * 既に settle 済み or 演出中なら何もしない。
+   */
+  forceSettle(): void
 }
 
 export interface FieldDieProps {
@@ -187,6 +200,7 @@ export const FieldDie = forwardRef<FieldDieHandle, FieldDieProps>(
     const rbRef    = useRef<RapierRigidBody>(null)
     const launched = useRef(false)
     const settled  = useRef(false)
+    const cockT    = useRef(0)   // 斜め停止（コックドダイス）検知用: 低速・低位置・非整列が続いた時間
     const matsRef  = useRef<(MeshStandardMaterial | null)[]>([])
     const bodyMeshRef = useRef<Mesh>(null)   // 本体メッシュ（雷v2 の visible 切替用）
     // 中央集約アニメ（物理を kinematic に切替え、位置だけ補間）
@@ -262,6 +276,10 @@ export const FieldDie = forwardRef<FieldDieHandle, FieldDieProps>(
         rb.setAngvel({ x: 0, y: 0, z: 0 }, true)
         const q = quatForValue(value)
         rb.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true)
+      },
+      forceSettle() {
+        // 外部（GameScene のウォッチドッグ）からの強制静置。実体は forceSettleFlat と共通。
+        forceSettleFlat()
       },
       setHidden(hidden) {
         if (bodyMeshRef.current) bodyMeshRef.current.visible = !hidden
@@ -627,7 +645,38 @@ export const FieldDie = forwardRef<FieldDieHandle, FieldDieProps>(
       // ── 着地誘導（方法C）: displayValue の面を上へ自然整列 ──
       if (settled.current) return
       steerFaceUp(rb, displayValue)
+
+      // ── 斜め停止（コックドダイス）検知 ──
+      // steer は「ほぼ平ら」になるまで角速度補正を当て続けるため、角・辺で物理的に詰まると
+      // 永久に sleep せず settle が来ない。床付近で移動が止まっている(=低linvel)のに整列しない状態が
+      // 続いたら「斜め停止」とみなし、displayValue を真上に向けて強制静置する。
+      const lin = rb.linvel()
+      const linSpeed = Math.hypot(lin.x, lin.y, lin.z)
+      const tt = rb.translation()
+      if (tt.y < COCK_Y_MAX && linSpeed < COCK_LIN_MAX && !topFaceValue(rb).aligned) {
+        cockT.current += dt
+        if (cockT.current > COCK_HOLD) forceSettleFlat()
+      } else {
+        cockT.current = 0
+      }
     })
+
+    // 斜め停止/外部要求時に displayValue を真上へ向けて床(中心y=0.5)に静置し settle を報告する共通処理。
+    const forceSettleFlat = () => {
+      const rb = rbRef.current
+      if (!rb || settled.current) return
+      if (thunderRef.current || zigzagRef.current || flipRef.current || !launched.current) return
+      settled.current = true
+      rb.setBodyType(RigidBodyType.KinematicPositionBased, true)
+      rb.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      rb.setAngvel({ x: 0, y: 0, z: 0 }, true)
+      const t = rb.translation()
+      const q = quatForValue(displayValue)
+      rb.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true)
+      rb.setTranslation({ x: t.x, y: 0.5, z: t.z }, true)
+      const eul = new Euler().setFromQuaternion(q, 'XYZ')
+      onSettle?.(id, [t.x, 0.5, t.z], [eul.x, eul.y, eul.z])
+    }
 
     const handleSleep = () => {
       // 雷の飛散ダイスが自然静止 → 終端処理（集約スポット・finalValue 上面へ復帰）。
