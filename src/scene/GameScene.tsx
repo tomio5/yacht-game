@@ -884,6 +884,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     | { type: 'roll';    turn: 'player'|'cpu'; rollNo: number; finalValues: number[]; displayValues: number[]; effectId: string; displayRank: string; throwEffect: string; confidenceSE: string }
     | { type: 'staging'; turn: 'player'|'cpu'; effectId: string; finalValues: number[]; displayRank: string }
     | { type: 'record';  turn: 'player'|'cpu'; roundNo: number; category: string; points: number }
+    // 集約先が重なった（中央集約バグ診断用）。assignments=各ダイスの id→slot→target。dist=最接近距離
+    | { type: 'gather_overlap'; turn: 'player'|'cpu'; net: boolean; ids: number[]; dist: number; assignments: { id: number; slot: number; pos: [number, number] }[] }
   const gameLogRef      = useRef<LogEntry[]>([])
   const gameStartedAtRef = useRef(new Date().toISOString())
   // ホストが受信したゲストのログ（一括DL用）。ゲスト→ホストへ sendLog で届く。
@@ -1257,11 +1259,42 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       targets.set(s.id, [cx + Math.cos(ang) * rr, GATHER_Y, cz + Math.sin(ang) * rr])
     })
 
+    // 診断: 集約先が近すぎる（ダイスが重なる）組があればログに記録。中央集約バグの原因特定用。
+    // 距離 < 1.0（ダイス一辺）なら重なり。スロット衝突なら ids が異なるのに pos がほぼ同一になる。
+    {
+      const entries = states.map(s => ({ id: s.id, slot: netMode ? s.id : -1, pos: targets.get(s.id)! }))
+      let minD = Infinity, pair: number[] = []
+      for (let i = 0; i < entries.length; i++) for (let j = i + 1; j < entries.length; j++) {
+        const a = entries[i].pos, b = entries[j].pos
+        const d = Math.hypot(a[0] - b[0], a[2] - b[2])
+        if (d < minD) { minD = d; pair = [entries[i].id, entries[j].id] }
+      }
+      if (minD < 1.0) {
+        gameLogRef.current.push({
+          type: 'gather_overlap', turn: turnRef.current, net: !!netMode,
+          ids: pair, dist: +minD.toFixed(3),
+          assignments: entries.map(e => ({ id: e.id, slot: e.slot, pos: [+e.pos[0].toFixed(2), +e.pos[2].toFixed(2)] })),
+        })
+      }
+    }
+
     // field ダイスは既存 FieldDie を即 gatherTo
+    const ungathered: number[] = []   // 診断: ref が無くて gatherTo できなかったダイス
     states.filter(s => s.location === 'field').forEach(s => {
       const cfgIdx = dieConfigsRef.current.findIndex(c => c.id === s.id)
-      dieRefsRef.current[cfgIdx]?.current?.gatherTo(targets.get(s.id)!)
+      const ref = cfgIdx >= 0 ? dieRefsRef.current[cfgIdx]?.current : null
+      if (ref) ref.gatherTo(targets.get(s.id)!)
+      else ungathered.push(s.id)
     })
+    if (ungathered.length > 0) {
+      // gatherTo されなかった field ダイスがあると、その場に取り残されて重なって見える。
+      gameLogRef.current.push({
+        type: 'gather_overlap', turn: turnRef.current, net: !!netMode,
+        ids: ungathered, dist: -1,   // dist=-1 は「ref欠落で集約スキップ」を表す
+        assignments: states.map(s => ({ id: s.id, slot: netMode ? s.id : -1,
+          pos: [+(targets.get(s.id)?.[0] ?? 0).toFixed(2), +(targets.get(s.id)?.[2] ?? 0).toFixed(2)] })),
+      })
+    }
 
     // kept ダイスは kinematic 出現で中央へ戻す config に差し替え
     const newConfigs = dieConfigsRef.current.map(c => {
