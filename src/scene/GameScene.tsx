@@ -882,7 +882,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── プレイログ ──────────────────────────────────
   type LogEntry =
     | { type: 'roll';    turn: 'player'|'cpu'; rollNo: number; finalValues: number[]; displayValues: number[]; effectId: string; displayRank: string; throwEffect: string; confidenceSE: string }
-    | { type: 'staging'; turn: 'player'|'cpu'; effectId: string; finalValues: number[]; displayRank: string }
+    | { type: 'staging'; turn: 'player'|'cpu'; effectId: string; finalValues: number[]; displayRank: string; target: number | null; targetKept: boolean; swap: number[]; keptIds: number[] }
     | { type: 'record';  turn: 'player'|'cpu'; roundNo: number; category: string; points: number }
     // 集約先が重なった（中央集約バグ診断用）。assignments=各ダイスの id→slot→target。dist=最接近距離
     | { type: 'gather_overlap'; turn: 'player'|'cpu'; net: boolean; ids: number[]; dist: number; assignments: { id: number; slot: number; pos: [number, number] }[] }
@@ -1632,9 +1632,18 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const playStaging = useCallback((forced?: string): string => {
     // ヨット成立 → staging テーブル抽選をスキップして光の柱演出を起動
     const finals = dieStatesRef.current.map(s => s.finalValue) as DieValue[]
+    // 診断: 演出が実際に狙うダイスとキープ状態を記録（「キープに演出が入った」報告の検証用）。
+    // 通常の演出ターゲットは swap[0]（デコイ）→無ければ field 先頭。kept を狙っていれば targetKept=true。
+    const dlog = () => {
+      const swap = [...swapIndicesRef.current]
+      const keptIds = dieStatesRef.current.filter(s => s.location === 'kept').map(s => s.id)
+      const fieldIds = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
+      const target = swap[0] ?? fieldIds[0] ?? null
+      return { target, targetKept: target != null && keptIds.includes(target), swap, keptIds }
+    }
     const isYacht = finals.length === 5 && finals.every(v => v === finals[0])
     if (isYacht || forced === 'yacht') {
-      gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: 'yacht', finalValues: finals, displayRank: getDisplayRank(finals) })
+      gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: 'yacht', finalValues: finals, displayRank: getDisplayRank(finals), ...dlog() })
       setPhase('staging')
       bgm.playGrace()
       yachtKeyRef.current += 1
@@ -1643,7 +1652,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     }
     // 通常 staging。forced 指定（観戦側）はそれを使い、未指定（アクティブ側）は抽選。
     const effect = (forced ?? selectStagingEffect()) as StagingEffect
-    gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: effect, finalValues: finals, displayRank: getDisplayRank(finals) })
+    gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: effect, finalValues: finals, displayRank: getDisplayRank(finals), ...dlog() })
     setPhase('staging')
     stagingPlayers.current[effect](() => {
       commitReveal()   // swap 対象を final で確定（キープ/アンキープが final 面に）
