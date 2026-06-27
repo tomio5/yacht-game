@@ -1326,6 +1326,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   // ── keep_select 入り: 操作受付開始 ────────────────────
   const enterKeepSelect = useCallback(() => {
+    // 保険: ターンリセット後に遅延コールバック（gather/slashB timeout 等）が来ても、
+    // 盤面が空（resetForNextTurn 済み）なら keep_select に入らない＝ホスト操作不能バグを防ぐ。
+    if (dieStatesRef.current.length === 0) return
     setPhase('keep_select')
     setDieStates([...dieStatesRef.current])
   }, [])
@@ -1665,6 +1668,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   // ── 集約完了 → staging を「装填」して keep_select へ直行（自動再生はしない） ──
   // cover あり（flip/thunder）なら armed=true にし、最初の操作で playStaging される。
   const finishGatherToKeepSelect = useCallback(() => {
+    // 保険: ターンリセット後に遅延タイマーが来ても空盤面なら何もしない（ホスト操作不能バグ防止）。
+    if (dieStatesRef.current.length === 0) return
     const finals = dieStatesRef.current.map(s => s.finalValue) as DieValue[]
     const isYacht = finals.length === 5 && finals.every(v => v === finals[0])
     // ヨット成立時は必ず staging を装填（テーブル抽選が none でも強制起動）
@@ -1886,7 +1891,10 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setPhase('gathering')
     gatherFieldDice()
     setDieStates([...dieStatesRef.current])
-    window.setTimeout(() => finishGatherToKeepSelect(), GATHER_MS)
+    // 追跡タイマーにする（resetForNextTurn でキャンセル可能に）。未追跡だとターン交代後に発火して
+    // 空盤面で keep_select に入り、ホストが操作不能になる原因だった。
+    if (gatherTimeoutRef.current) clearTimeout(gatherTimeoutRef.current)
+    gatherTimeoutRef.current = window.setTimeout(() => { gatherTimeoutRef.current = null; finishGatherToKeepSelect() }, GATHER_MS)
   }, [gatherFieldDice, finishGatherToKeepSelect, enterPreGatherCover, forceRestoreSlashB])
 
   // ── キープ: field → kept ─────────────────────────
@@ -2015,6 +2023,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // Bug3 fix: 観戦中の gathering タイマーが残っていたらキャンセル（ターン切替で keep_select に入るのを防ぐ）
     if (gatherTimeoutRef.current) { clearTimeout(gatherTimeoutRef.current); gatherTimeoutRef.current = null }
     if (settleWatchdogRef.current) { clearTimeout(settleWatchdogRef.current); settleWatchdogRef.current = null }
+    if (slashBTimeoutRef.current) { clearTimeout(slashBTimeoutRef.current); slashBTimeoutRef.current = null }
+    setSlashActive(false)
   }, [])
 
   // ── ネットモード サブスクリプション ──────────────────
@@ -2563,6 +2573,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
                 ログをDL{netMode?.role === 'host' && guestLogGot ? '（ゲスト分あり）' : ''}
               </button>
             )}
+            {/* 緊急復帰: 演出/集約の途中で固まって操作不能になったとき、現在のターンを idle に戻す。
+                スコア（シート）は保持されるので進行は失われない。最終手段。 */}
+            <button
+              style={{ ...logBtnStyle, background: '#5c2d2d', fontSize: 10, padding: '5px 8px' }}
+              onClick={() => { SE.button(); resetForNextTurn() }}
+            >
+              操作不能時に押す（復帰）
+            </button>
           </div>
         }
       />
