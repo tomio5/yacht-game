@@ -1851,6 +1851,35 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         gatherTimeoutRef.current = window.setTimeout(() => { gatherTimeoutRef.current = null; finishGatherToKeepSelect() }, GATHER_MS)
       }
 
+      // ★キープダイスも中央へ戻す（通常 gatherFieldDice と同じ処理。これが抜けていて、再振り＋slashB 時に
+      //   キープダイスが集約されず config も更新されないまま残り、次の再振りで1個消えるバグになっていた）。
+      const keptSorted = states.filter(s => s.location === 'kept').sort((a, b) => a.keepOrder - b.keepOrder)
+      const fieldCount = candidates.length
+      keptSorted.forEach((s, k) => {
+        const slotIdx = slotIdxs[(fieldCount + k) % 5]
+        const [cx, cz] = GATHER_CENTERS[slotIdx]
+        const ang = Math.random() * Math.PI * 2
+        const rr  = Math.sqrt(Math.random()) * GATHER_RADIUS
+        const gatherTarget: [number, number, number] = [cx + Math.cos(ang) * rr, GATHER_Y, cz + Math.sin(ang) * rr]
+        const from = KEEP_SLOTS[k] ?? (s.worldPos as [number, number, number])
+        const ci = dieConfigsRef.current.findIndex(c => c.id === s.id)
+        if (ci >= 0) {
+          dieConfigsRef.current[ci] = makeDieConfig(
+            s.id, s.displayValue,
+            { initRot: s.worldRot ?? undefined, pos: [...from], kinematicSpawn: true, gatherTarget },
+            undefined, s.mountKey + 1,
+          )
+        }
+        // gatherFieldDice と同様、集約後は全ダイスを field・keepReset に戻す（キープ解除して中央に並ぶ）
+        dieStatesRef.current = dieStatesRef.current.map(ds =>
+          ds.id === s.id ? { ...ds, location: 'field' as const, keepOrder: -1, worldPos: gatherTarget, mountKey: s.mountKey + 1 } : ds
+        )
+      })
+      if (keptSorted.length > 0) {
+        dieRefsRef.current = dieConfigsRef.current.map(c => c.ref)
+        setDieConfigs([...dieConfigsRef.current])
+      }
+
       setDieStates([...dieStatesRef.current])
       return
     }
