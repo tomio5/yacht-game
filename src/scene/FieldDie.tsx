@@ -132,6 +132,20 @@ function topFaceValue(rb: RapierRigidBody): { value: DieValue; aligned: boolean 
   return { value: best, aligned: bestY > 0.90 }   // ~25°以内なら整列とみなす
 }
 
+// 最も上を向いている面の +Y 成分（=cosθ。1.0 で完全に平ら）。傾き(コックド)判定用。
+function topFaceUpDot(rb: RapierRigidBody): number {
+  const r = rb.rotation()
+  const quat = new ThreeQuat(r.x, r.y, r.z, r.w)
+  let bestY = -Infinity
+  for (const v of [1, 2, 3, 4, 5, 6] as DieValue[]) {
+    const y = new Vector3(...TARGET_NORMALS[v]).applyQuaternion(quat).y
+    if (y > bestY) bestY = y
+  }
+  return bestY
+}
+// この cos 未満（≒10°超の傾き）で静止したら「傾いて寝た」とみなし平らに静置する
+const COCK_FLAT_COS = 0.985
+
 // ── 出目の書き換え方針（重要・全演出共通） ──────────────────────────
 // テクスチャは6面固定（各面は自分の値を表示）。display→final の「書き換え」は
 // テクスチャを塗り替えるのではなく、ダイスを「final の面が真上に来る姿勢」へ実際に回転して行う。
@@ -653,7 +667,7 @@ export const FieldDie = forwardRef<FieldDieHandle, FieldDieProps>(
       const lin = rb.linvel()
       const linSpeed = Math.hypot(lin.x, lin.y, lin.z)
       const tt = rb.translation()
-      if (tt.y < COCK_Y_MAX && linSpeed < COCK_LIN_MAX && !topFaceValue(rb).aligned) {
+      if (tt.y < COCK_Y_MAX && linSpeed < COCK_LIN_MAX && topFaceUpDot(rb) < COCK_FLAT_COS) {
         cockT.current += dt
         if (cockT.current > COCK_HOLD) forceSettleFlat()
       } else {
@@ -687,6 +701,9 @@ export const FieldDie = forwardRef<FieldDieHandle, FieldDieProps>(
         return
       }
       if (settled.current || !rbRef.current) return
+      // 傾いて寝た（コックド/微傾き）場合は displayValue を真上に向けて平らに静置する。
+      // onSleep は傾いたままでも発火するため、ここで均さないと集約が姿勢保持で傾きを運んでしまう。
+      if (topFaceUpDot(rbRef.current) < COCK_FLAT_COS) { forceSettleFlat(); return }
       settled.current = true
       const t   = rbRef.current.translation()
       const r   = rbRef.current.rotation()
