@@ -42,6 +42,10 @@ export class PeerConnection {
     conn.on('close', () => this.onDisconnected())
     // DataConnection 自体のエラー（ICE 断など close が来ないケース）も切断として扱う
     conn.on('error', () => this.onDisconnected())
+    // タブ閉じ等の突然切断では close が発火しない/数十秒遅れることがあるため、ICE 状態でも検知する
+    conn.on('iceStateChanged', (state) => {
+      if (state === 'disconnected' || state === 'failed' || state === 'closed') this.onDisconnected()
+    })
   }
 
   send(data: unknown) {

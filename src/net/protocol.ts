@@ -129,6 +129,12 @@ export interface MsgReady {
   type: 'ready'
 }
 
+/** 生存確認（双方向・2.5s毎）。PeerJS はタブ閉じ等の突然切断で close イベントが発火しないことが
+ *  あるため、アプリレベルで「一定時間なにも受信しない＝切断」を判定するのに使う。 */
+export interface MsgPing {
+  type: 'ping'
+}
+
 /** プレイログ転送。ゲスト→ホストへ自分のログ全体を送り、ホスト側で両者ぶんを突き合わせ・一括DLするため。
  *  entries は GameScene の LogEntry[]（プロトコル層では型を固定せず unknown 配列で運ぶ）。 */
 export interface MsgLog {
@@ -156,6 +162,7 @@ export type HostToGuest =
   | MsgCupReleased
   | MsgReady
   | MsgLog
+  | MsgPing
 
 /** ゲスト→ホスト方向のメッセージ */
 export type GuestToHost =
@@ -168,6 +175,7 @@ export type GuestToHost =
   | MsgCupReleased
   | MsgReady
   | MsgLog
+  | MsgPing
 
 /** 受信データのナローイング用型ガード */
 export function isHostToGuest(data: unknown): data is HostToGuest {

@@ -181,10 +181,24 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   useEffect(() => {
     // ゲーム中の切断検知: ロビー（TitleScreen）は NetGame マウント時点でアンマウント済みなので
     // ここで上書き代入して問題ない。GameScene が onPeerDisconnected で購読し、切断オーバーレイを出す。
-    peerConnection.onDisconnected = () => {
+    let disconnectFired = false   // close/error/ICE/ハートビートの多重発火を1回に集約
+    const fireDisconnect = () => {
+      if (disconnectFired) return
+      disconnectFired = true
       disconnectCbs.current.forEach(cb => cb())
     }
+    peerConnection.onDisconnected = fireDisconnect
+
+    // ハートビート: PeerJS はタブ閉じ等の突然切断で close が発火しないことがあるため、
+    // アプリレベルで 2.5s 毎に ping を送り、10s 何も受信しなければ切断とみなす（確実な検知層）。
+    let lastRecv = Date.now()
+    const pingTimer  = setInterval(() => { peerConnection.send({ type: 'ping' }) }, 2500)
+    const watchTimer = setInterval(() => {
+      if (Date.now() - lastRecv > 10000) fireDisconnect()
+    }, 3000)
+
     peerConnection.onData = (raw) => {
+      lastRecv = Date.now()   // ping 含む全受信で生存更新
       if (role === 'host') {
         const msg = raw as GuestToHost
         switch (msg.type) {
@@ -283,6 +297,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
         }
       }
     }
+    return () => { clearInterval(pingTimer); clearInterval(watchTimer) }
   }, [role, hostProcessGuestRoll, hostProcessGuestRecord])
 
   // ── 公開 API ─────────────────────────────────────────
