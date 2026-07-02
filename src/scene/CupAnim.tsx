@@ -353,6 +353,8 @@ export const CupAnim = forwardRef<CupAnimHandle, CupAnimProps>(
         setRattle(true)
       },
       triggerSyncRoll() {
+        // phase ガードが二重呼び出し防御を兼ねる: 二重 cup_thrown 受信でも1回目で roll_shaking に
+        // 遷移済みのため2回目は無視される（canThrow は見ない＝観戦側のプログラム連動専用のため）。
         if (phase.current !== 'roll_ready') return
         holdReleased.current = false
         innerHidden.current  = false

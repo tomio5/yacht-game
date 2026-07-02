@@ -76,11 +76,19 @@ function Lobby({ role, onSolo, onNetStart }: {
   const started    = useRef(false)
   const peerInited = useRef(false)
   const aliveRef   = useRef(true)
+  // ready 再送タイマー: 1回きりの送信だと紛失時に両者「相手待ち」で永久停止（デッドロック）するため、
+  // 開始が成立するまで 2 秒毎に再送する。受信側は冪等（peerReady=true の重複代入）なので安全。
+  const readyResendRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopReadyResend = () => {
+    if (readyResendRef.current) { clearInterval(readyResendRef.current); readyResendRef.current = null }
+  }
 
   const tryStart = () => {
     if (started.current) return
     if (iAmReady.current && peerReady.current) {
       started.current = true
+      stopReadyResend()
       onNetStart()
     }
   }
@@ -90,11 +98,18 @@ function Lobby({ role, onSolo, onNetStart }: {
     aliveRef.current = true
     peerConnection.onData = (raw) => {
       const msg = raw as { type?: string }
-      if (msg?.type === 'ready') { peerReady.current = true; tryStart() }
+      if (msg?.type === 'ready') {
+        // エコー: 相手の ready を「初めて」受けたとき、自分が ready 済みならもう一度返す。
+        // 相手が自分の ready を取りこぼしていた場合の即時回復（初回のみ返すのでピンポンしない）。
+        const firstReceipt = !peerReady.current
+        peerReady.current = true
+        if (firstReceipt && iAmReady.current && !started.current) peerConnection.send({ type: 'ready' })
+        tryStart()
+      }
     }
     peerConnection.onConnected = () => { if (aliveRef.current) setPhase('ready') }
     peerConnection.onDisconnected = () => { if (aliveRef.current) setErr('相手との接続が切れました') }
-    return () => { aliveRef.current = false }
+    return () => { aliveRef.current = false; stopReadyResend() }
   }, [])
 
   // ゲスト: マウント即・初期化＆ホストへ接続
@@ -120,6 +135,11 @@ function Lobby({ role, onSolo, onNetStart }: {
     iAmReady.current = true
     setWaiting(true)
     peerConnection.send({ type: 'ready' })
+    // 開始成立まで 2 秒毎に再送（tryStart 成功 or アンマウントで停止）
+    readyResendRef.current = setInterval(() => {
+      if (started.current) { stopReadyResend(); return }
+      peerConnection.send({ type: 'ready' })
+    }, 2000)
     tryStart()
   }
 

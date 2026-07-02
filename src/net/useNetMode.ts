@@ -69,6 +69,8 @@ export interface NetMode {
   // プレイログ転送（ゲスト→ホスト）。sendLog で自分のログを送り、ホストは onLog で受け取って一括DLに含める
   sendLog: (startedAt: string, entries: unknown[]) => void
   onLog:   (cb: (role: 'host'|'guest', startedAt: string, entries: unknown[]) => void) => () => void
+  // 相手との接続断（close/error）。GameScene が購読して切断オーバーレイを表示する
+  onPeerDisconnected: (cb: () => void) => () => void
 }
 
 // ── フック ───────────────────────────────────────────────
@@ -84,6 +86,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   const cupThrownCbs    = useRef<Set<() => void>>(new Set())
   const cupReleasedCbs  = useRef<Set<() => void>>(new Set())
   const logCbs          = useRef<Set<(role: 'host'|'guest', startedAt: string, entries: unknown[]) => void>>(new Set())
+  const disconnectCbs   = useRef<Set<() => void>>(new Set())
   const gameResetCbs    = useRef<Set<() => void>>(new Set())
 
   // ホストが管理するシート（ゲスト→ホストのreq_record受信時に使う）
@@ -176,6 +179,11 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
   const guestKeptIds    = useRef<number[]>([])
 
   useEffect(() => {
+    // ゲーム中の切断検知: ロビー（TitleScreen）は NetGame マウント時点でアンマウント済みなので
+    // ここで上書き代入して問題ない。GameScene が onPeerDisconnected で購読し、切断オーバーレイを出す。
+    peerConnection.onDisconnected = () => {
+      disconnectCbs.current.forEach(cb => cb())
+    }
     peerConnection.onData = (raw) => {
       if (role === 'host') {
         const msg = raw as GuestToHost
@@ -396,6 +404,7 @@ export function useNetMode(role: 'host' | 'guest'): NetMode {
     onCupThrown:    sub(cupThrownCbs.current),
     onCupReleased:  sub(cupReleasedCbs.current),
     onLog:          sub(logCbs.current),
+    onPeerDisconnected: sub(disconnectCbs.current),
   }
 }
 

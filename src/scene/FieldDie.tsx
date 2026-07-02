@@ -679,7 +679,9 @@ export const FieldDie = forwardRef<FieldDieHandle, FieldDieProps>(
     const forceSettleFlat = () => {
       const rb = rbRef.current
       if (!rb || settled.current) return
-      if (thunderRef.current || zigzagRef.current || flipRef.current || !launched.current) return
+      // thunderRestoreRef も除外: 雷の「着地位置→集約スポットへ復帰」補間中に watchdog が発火すると
+      // 座標を上書きして復帰アニメが壊れるため、演出系はすべて対象外にする。
+      if (thunderRef.current || thunderRestoreRef.current || zigzagRef.current || flipRef.current || !launched.current) return
       settled.current = true
       rb.setBodyType(RigidBodyType.KinematicPositionBased, true)
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true)

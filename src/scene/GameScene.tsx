@@ -178,6 +178,7 @@ function generateZigzagWaypoints(
 }
 const CPU_READ_MS       = 1000  // CPU が集約後「盤面を読む時間」。経過後に自動で staging を起動（観戦用の間）
 const SLASH_B_TIMEOUT_MS = 6000  // B系統演出のタイムアウト（zigzag 未完了時の force-restore 安全策）
+const STAGING_WATCHDOG_MS = 8000 // staging 全演出共通の完了保証（onDone 未着でも強制開示して keep_select へ）
 
 // 信頼度演出音（gako / gakokyuin）: 抽選ロジックは effectTable.ts、対象判定 maxRoleScore は scoring.ts に集約
 // （host/guest 両方から使うため共有モジュールへ）。
@@ -804,6 +805,10 @@ export const STAGING_TEST_EFFECTS = [
 
 export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const [phase,       setPhase]       = useState<GamePhase>('idle')
+  // phase の同期ミラー。setPhase は非同期なので、staging 起動直後の二連打などで古い phase 判定を
+  // 通過するのを防ぐため、重要な遷移（playStaging 等）では phaseRef を同期セットしてガードに使う。
+  const phaseRef = useRef<GamePhase>('idle')
+  useEffect(() => { phaseRef.current = phase }, [phase])
   const [turn,        setTurn]        = useState<Turn>('player')
   const turnRef = useRef<Turn>('player')   // ログ等で最新 turn を参照するため（stale closure 回避）
   useEffect(() => { turnRef.current = turn }, [turn])
@@ -819,6 +824,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const [cpuThinking, setCpuThinking] = useState(false)
   const [gameOver,    setGameOver]    = useState(false)
   const [lastCpuCat,  setLastCpuCat]  = useState<string | null>(null)
+  const [peerLost,    setPeerLost]    = useState(false)   // ネット対戦: 相手との接続断（オーバーレイ表示）
   // 雷の発火点ビジュアル（稲妻＋着弾フラッシュ）。対象 die の XZ＋発火 key。null=非表示。
   const [thunderStrike, setThunderStrike] = useState<{ x: number; z: number; key: number; power: number } | null>(null)
   const thunderFireRef = useRef(0)
@@ -872,6 +878,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const pendingStagingEffectRef = useRef<string>('')  // host が選んだ演出ID（キュー消化時にこれを直接再生）
   const slashBArmedRef   = useRef(false)         // B系統演出: gathering をスキップするフラグ
   const slashBTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // B系統 force-restore 用
+  // staging 全演出共通の完了保証。fire/windmill/doubleFlip 等は個別 timeout を持たないため、
+  // onDone が来ない事故（ref 欠落等）で staging フェーズに永久停止しないよう一括で保険をかける。
+  const stagingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Bug3 fix: gathering→keep_select 遅延タイマーを追跡し resetForNextTurn で確実にキャンセル
   const gatherTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Bug1 fix: onRollResult(再振り)で受け取った throwEffect を handleReRoll に橋渡しするための一時置き場
@@ -902,6 +911,12 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
   const dieRefsRef      = useRef<React.RefObject<FieldDieHandle | null>[]>([])
   const dieConfigsRef   = useRef<DieConfig[]>([])
   const keepCounterRef  = useRef(0)
+  /** die id → FieldDie ハンドル。config 配列は現状 id 順（index==id）だが、直接 [id] で引く箇所と
+   *  findIndex 経由の箇所が混在して壊れやすかったため、id 由来のアクセスはすべてここに統一する。 */
+  const dieRefById = useCallback((id: number): FieldDieHandle | null => {
+    const idx = dieConfigsRef.current.findIndex(c => c.id === id)
+    return idx >= 0 ? (dieRefsRef.current[idx]?.current ?? null) : null
+  }, [])
   /** 直近のロール結果（再振りでデバッグ指定値を振り直し分へ反映するため参照） */
   const lastResultRef   = useRef<{ displayValues: DieValue[]; finalValues: DieValue[]; mode: EffectMode; effectId: CoverId } | null>(null)
   // DEBUG パネルの mode/cover 強制（1投目で受け取り、再振りにも引き継ぐ）。auto/auto＝通常抽選。
@@ -1329,6 +1344,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // 保険: ターンリセット後に遅延コールバック（gather/slashB timeout 等）が来ても、
     // 盤面が空（resetForNextTurn 済み）なら keep_select に入らない＝ホスト操作不能バグを防ぐ。
     if (dieStatesRef.current.length === 0) return
+    phaseRef.current = 'keep_select'   // 同期セット（直後のクリックを取りこぼさない）
     setPhase('keep_select')
     setDieStates([...dieStatesRef.current])
   }, [])
@@ -1341,26 +1357,24 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const finals = states.map(s => s.finalValue)
     const field  = states.find(s => s.location === 'field')   // 4キープ再振り＝field は1個のみ
     if (!field || !field.worldPos) { onDone(); return }       // 保険
-    const refs = dieRefsRef.current
     cupRef.current?.animate(
       field.worldPos[0], field.worldPos[2],
-      () => { for (const i of swapIndicesRef.current) refs[i]?.current?.orientTo(finals[i]) },  // 隠れた間に回転
+      () => { for (const i of swapIndicesRef.current) dieRefById(i)?.orientTo(finals[i]) },  // 隠れた間に回転
       onDone,
     )
-  }, [])
+  }, [dieRefById])
 
   // ── 演出: フリップ cover（success 専用。対象1個を跳ね上げ回転して final の面を真上に） ──
   // cup を使わず回転そのもので出目を入れ替える。対象以外は動かさない・値も変えない。
   const playFlip = useCallback((onDone: () => void) => {
     const finals = dieStatesRef.current.map(s => s.finalValue)
     const swap   = swapIndicesRef.current
-    const refs   = dieRefsRef.current
     const target = swap[0]                       // success の差し替え対象（1個）
-    const dieRef = target != null ? refs[target]?.current : null
+    const dieRef = target != null ? dieRefById(target) : null
     if (!dieRef) { onDone(); return }            // 対象なし（保険）→ 素通し
     playFlipSE()                                 // 跳ね上げ初動で jump.wav
     dieRef.flip(finals[target], onDone)          // final の面が真上に来るよう回転
-  }, [])
+  }, [dieRefById])
 
   // ── 演出: 雷 cover（物理演出ポリシーの参照実装。success 専用） ──
   // 対象 = swapIndices[0] の1個だけ。FieldDie.thunder が dynamic 飛散→静止/timeout で
@@ -1369,9 +1383,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const states = dieStatesRef.current
     const finals = states.map(s => s.finalValue)
     const swap   = swapIndicesRef.current
-    const refs   = dieRefsRef.current
     const target = swap[0]
-    const dieRef = target != null ? refs[target]?.current : null
+    const dieRef = target != null ? dieRefById(target) : null
     if (!dieRef || target == null) { onDone(); return }   // 対象なし（保険）→ 素通し
     let firstStrike = true                                // 雷SEは演出中1回だけ（初回着弾で）
     dieRef.thunder(
@@ -1384,7 +1397,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       },
       () => { setThunderStrike(null); onDone() },        // 終了で発火点ビジュアルを消す
     )
-  }, [])
+  }, [dieRefById])
 
   // ── 演出: 雷v2（分解→再集合→再生→swap）。FractureSystem を利用。success 専用 ──
   // 不動契約: 対象1個以外の field/kept・カップは集約完了後 kinematic 静止のまま（本演出は触らない）。
@@ -1393,9 +1406,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const states = dieStatesRef.current
     const finals = states.map(s => s.finalValue)
     const swap   = swapIndicesRef.current
-    const refs   = dieRefsRef.current
     const target = swap[0]
-    const dieRef = target != null ? refs[target]?.current : null
+    const dieRef = target != null ? dieRefById(target) : null
     const pos    = target != null ? states.find(s => s.id === target)?.worldPos : undefined
     if (!dieRef || target == null || !pos) { onDone(); return }   // 保険
     // 着弾視覚（A1 と同じ稲妻＋着弾フラッシュを共有）＋着弾音（thunder4）
@@ -1411,7 +1423,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       () => { dieRef.setHidden(false) },             // onAssembled: 既に final 面 → 表示するだけ
       () => { setThunderStrike(null); onDone() },    // onComplete: 欠片退避完了 → staging 終了
     )
-  }, [])
+  }, [dieRefById])
 
   // ── 演出: 炎 cover（局所・物理なし。success/miss 両対応）。発生→拡大して隠す→消える ──
   // 対象＝swapIndices[0]（success）／cupIndices[0]（miss）／無ければ field 先頭。covers 中に
@@ -1420,7 +1432,6 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const states = dieStatesRef.current
     const finals = states.map(s => s.finalValue)
     const swap   = swapIndicesRef.current
-    const refs   = dieRefsRef.current
     const fieldIds = states.filter(s => s.location === 'field').map(s => s.id)
     // ターゲットは必ずキープ外（swap は非キープのデコイ。無ければ振ったダイス fieldIds[0]）。
     // cup[0] はキープを含みうるためフォールバックから除外する。
@@ -1431,18 +1442,18 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     setFireFx({
       x: pos[0], y: pos[1], z: pos[2], key: fireFxKeyRef.current,
       onPhase: (n) => playFireSE(n),                                  // 段階SE fire1/2/3
-      onCover: () => { for (const i of swap) refs[i]?.current?.orientTo(finals[i]) },  // 隠れて swap（miss は空）
+      onCover: () => { for (const i of swap) dieRefById(i)?.orientTo(finals[i]) },  // 隠れて swap（miss は空）
       onDone:  () => { setFireFx(null); onDone() },
     })
-  }, [])
+  }, [dieRefById])
 
   // ── 追加演出バッチ（既存プリミティブのみ：flip/orientTo/onFlash/onDark/DOM）──────────
   // staging プレイヤー互換 (onDone)=>void。swap 対象を「隠れた/暗い瞬間」に orientTo して final を開示。
   // 本番テーブルには未登録。DebugPanel「演出テスト」から現在の盤面で再生して見た目を評価する。
   const revealSwapNow = useCallback(() => {
     const finals = dieStatesRef.current.map(s => s.finalValue)
-    for (const i of swapIndicesRef.current) dieRefsRef.current[i]?.current?.orientTo(finals[i])
-  }, [])
+    for (const i of swapIndicesRef.current) dieRefById(i)?.orientTo(finals[i])
+  }, [dieRefById])
 
   // ① フラッシュバン: 一瞬の強白フラッシュ。白ピークで swap を開示。
   const playFlashbang = useCallback((onDone: () => void) => {
@@ -1476,14 +1487,14 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const finals   = dieStatesRef.current.map(s => s.finalValue)
     const fieldIds = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
     const target   = swapIndicesRef.current[0] ?? fieldIds[0]
-    const dieRef   = target != null ? dieRefsRef.current[target]?.current : null
+    const dieRef   = target != null ? dieRefById(target) : null
     if (!dieRef || target == null) { onDone(); return }
     playFlipSE()
     dieRef.flip(finals[target], () => {
       playFlipSE()
       dieRef.flip(finals[target], onDone)
     })
-  }, [])
+  }, [dieRefById])
 
   // ⑤ 風車: field ダイスを少しずつ遅延させて順番にフリップ（リングを舞うように）。
   const playWindmill = useCallback((onDone: () => void) => {
@@ -1493,13 +1504,13 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     let remaining = ids.length
     ids.forEach((id, k) => {
       window.setTimeout(() => {
-        const dieRef = dieRefsRef.current[id]?.current
+        const dieRef = dieRefById(id)
         if (!dieRef) { if (--remaining === 0) onDone(); return }
         if (k === 0) playFlipSE()
         dieRef.flip(finals[id], () => { if (--remaining === 0) onDone() })
       }, k * 110)
     })
-  }, [])
+  }, [dieRefById])
 
   // ── 追加演出バッチ2（ダイスが動く系。flip / zigzagTo / 雷ビジュアルを流用）──────────
   // ⑥ 一斉フリップ: 全 field ダイスが同時に跳ねて final へ。
@@ -1510,18 +1521,18 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     let remaining = ids.length
     playFlipSE()
     ids.forEach(id => {
-      const dieRef = dieRefsRef.current[id]?.current
+      const dieRef = dieRefById(id)
       if (!dieRef) { if (--remaining === 0) onDone(); return }
       dieRef.flip(finals[id], () => { if (--remaining === 0) onDone() })
     })
-  }, [])
+  }, [dieRefById])
 
   // ⑦ トリプルフリップ: 対象を3連続で跳ね上げ。
   const playTripleFlip = useCallback((onDone: () => void) => {
     const finals   = dieStatesRef.current.map(s => s.finalValue)
     const fieldIds = dieStatesRef.current.filter(s => s.location === 'field').map(s => s.id)
     const target   = swapIndicesRef.current[0] ?? fieldIds[0]
-    const dieRef   = target != null ? dieRefsRef.current[target]?.current : null
+    const dieRef   = target != null ? dieRefById(target) : null
     if (!dieRef || target == null) { onDone(); return }
     const v = finals[target]
     playFlipSE()
@@ -1529,7 +1540,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
       playFlipSE()
       dieRef.flip(v, () => { playFlipSE(); dieRef.flip(v, onDone) })
     })
-  }, [])
+  }, [dieRefById])
 
   // ⑧ ジグザグダッシュ: 対象が稲妻状に走って元の位置へ着地（tumble で final 開示）。
   const playZigzagDash = useCallback((onDone: () => void) => {
@@ -1537,7 +1548,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const finals   = states.map(s => s.finalValue)
     const fieldIds = states.filter(s => s.location === 'field').map(s => s.id)
     const target   = swapIndicesRef.current[0] ?? fieldIds[0]
-    const dieRef   = target != null ? dieRefsRef.current[target]?.current : null
+    const dieRef   = target != null ? dieRefById(target) : null
     const pose     = dieRef?.readPose()
     if (!dieRef || target == null || !pose) { onDone(); return }
     const p = pose.pos
@@ -1551,7 +1562,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     ]
     playZangekiSE()
     dieRef.zigzagTo(pts, finals[target], onDone, SLASH_SEG_STARTS)
-  }, [])
+  }, [dieRefById])
 
   // ⑨ チェイン落雷: 雷ビジュアルが各ダイスへ連鎖。着弾ごとにフリップで開示。
   const playChainBolt = useCallback((onDone: () => void) => {
@@ -1562,16 +1573,16 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     let remaining = field.length
     field.forEach((s, k) => {
       window.setTimeout(() => {
-        const p = s.worldPos ?? dieRefsRef.current[s.id]?.current?.readPose()?.pos
+        const p = s.worldPos ?? dieRefById(s.id)?.readPose()?.pos
         thunderFireRef.current += 1
         if (p) setThunderStrike({ x: p[0], z: p[2], key: thunderFireRef.current, power: 1 })
         if (k === 0) playThunderA1SE()
-        const dieRef = dieRefsRef.current[s.id]?.current
+        const dieRef = dieRefById(s.id)
         if (dieRef) dieRef.flip(finals[s.id], () => { if (--remaining === 0) { setThunderStrike(null); onDone() } })
         else if (--remaining === 0) { setThunderStrike(null); onDone() }
       }, k * 180)
     })
-  }, [])
+  }, [dieRefById])
 
   // ── 演出の登録（器・staging 専用）: cupHide は staging から外れている（pre_gather_cover で消費）。
   // 将来の staging 系演出は EffectId 追加＋ここに登録＋テーブル行追加だけで足せる。
@@ -1615,10 +1626,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const swap = swapIndicesRef.current
     if (swap.length === 0) return
     const finals = dieStatesRef.current.map(s => s.finalValue)
-    const refs = dieRefsRef.current
     dieStatesRef.current = dieStatesRef.current.map(s => {
       if (!swap.includes(s.id)) return s
-      const pose = refs[s.id]?.current?.readPose()
+      const pose = dieRefById(s.id)?.readPose()
       return {
         ...s,
         displayValue: finals[s.id],
@@ -1626,7 +1636,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
         worldRot: pose?.rot ?? s.worldRot,
       }
     })
-  }, [])
+  }, [dieRefById])
 
   // ── staging 再生本体: phase=staging → cover 再生 → keep_select に戻す ──
   // （トリガは「プレイヤー/CPU の操作」。抽選自体は集約直後に済んでおり lastResultRef に保持済み）
@@ -1647,6 +1657,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     const isYacht = finals.length === 5 && finals.every(v => v === finals[0])
     if (isYacht || forced === 'yacht') {
       gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: 'yacht', finalValues: finals, displayRank: getDisplayRank(finals), ...dlog() })
+      phaseRef.current = 'staging'   // 同期セット（二連打ガード用）
       setPhase('staging')
       bgm.playGrace()
       yachtKeyRef.current += 1
@@ -1656,12 +1667,27 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // 通常 staging。forced 指定（観戦側）はそれを使い、未指定（アクティブ側）は抽選。
     const effect = (forced ?? selectStagingEffect()) as StagingEffect
     gameLogRef.current.push({ type: 'staging', turn: turnRef.current, effectId: effect, finalValues: finals, displayRank: getDisplayRank(finals), ...dlog() })
+    phaseRef.current = 'staging'   // 同期セット: 直後のクリックが古い phase 判定を通過しないように
     setPhase('staging')
-    stagingPlayers.current[effect](() => {
+    let stagingDone = false   // onDone とウォッチドッグの二重実行防止
+    const finishStaging = () => {
+      if (stagingDone) return
+      stagingDone = true
+      if (stagingWatchdogRef.current) { clearTimeout(stagingWatchdogRef.current); stagingWatchdogRef.current = null }
       commitReveal()   // swap 対象を final で確定（キープ/アンキープが final 面に）
+      phaseRef.current = 'keep_select'
       setPhase('keep_select')
       setDieStates([...dieStatesRef.current])
-    })
+    }
+    // 完了保証: onDone が来なくても 8 秒で強制的に開示して keep_select へ戻す（進行停止防止）
+    if (stagingWatchdogRef.current) clearTimeout(stagingWatchdogRef.current)
+    stagingWatchdogRef.current = setTimeout(() => {
+      stagingWatchdogRef.current = null
+      if (phaseRef.current !== 'staging') return          // 既に完了している
+      if (dieStatesRef.current.length === 0) return       // ターンリセット済み
+      finishStaging()
+    }, STAGING_WATCHDOG_MS)
+    stagingPlayers.current[effect](finishStaging)
     return effect
   }, [selectStagingEffect, commitReveal])
 
@@ -1899,7 +1925,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   // ── キープ: field → kept ─────────────────────────
   const handleKeep = useCallback((id: number) => {
-    if (phase !== 'keep_select' || turn !== 'player') return
+    // phaseRef で判定: staging 起動直後の二連打で古い phase='keep_select' を通過しないように
+    if (phaseRef.current !== 'keep_select' || turn !== 'player') return
     if (rollsLeft === 0) return   // 振り切り後はキープ操作不可
     if (netMode && !netMode.isMyTurn()) return
     if (maybeTriggerStaging()) return   // 最初の操作なら staging を再生（このキープは保留）
@@ -1922,7 +1949,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   // ── アンキープ: kept → field ─────────────────────
   const handleUnkeep = useCallback((id: number) => {
-    if (phase !== 'keep_select' || turn !== 'player') return
+    // phaseRef で判定: staging 起動直後の二連打対策（handleKeep と同様）
+    if (phaseRef.current !== 'keep_select' || turn !== 'player') return
     if (rollsLeft === 0) return   // 振り切り後はアンキープ操作不可
     if (netMode && !netMode.isMyTurn()) return
     if (maybeTriggerStaging()) return   // 最初の操作なら staging を再生（この解除は保留）
@@ -1964,6 +1992,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
 
   // ── スコア記入 (プレイヤー) ──────────────────────
   const handleRecord = useCallback((cat: Category) => {
+    if (phaseRef.current !== 'keep_select') return   // staging 演出中の記入を防止（二連打対策）
     if (netMode && !netMode.isMyTurn()) return
     if (maybeTriggerStaging()) return   // 最終投目の最初の操作なら staging を先に再生（記入は保留）
     const finals   = dieStatesRef.current.map(s => s.finalValue)
@@ -2024,6 +2053,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     if (gatherTimeoutRef.current) { clearTimeout(gatherTimeoutRef.current); gatherTimeoutRef.current = null }
     if (settleWatchdogRef.current) { clearTimeout(settleWatchdogRef.current); settleWatchdogRef.current = null }
     if (slashBTimeoutRef.current) { clearTimeout(slashBTimeoutRef.current); slashBTimeoutRef.current = null }
+    if (stagingWatchdogRef.current) { clearTimeout(stagingWatchdogRef.current); stagingWatchdogRef.current = null }
+    phaseRef.current = 'idle'
     setSlashActive(false)
   }, [])
 
@@ -2046,6 +2077,10 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     // ロール結果受信
     unsubs.push(netMode.onRollResult(r => {
       const finals = r.finals as import('../game/types').DieValue[]
+      // 前ロール向けにキューされた staging を破棄（古いロールの演出が新しい盤面で発火しないように）。
+      // DataChannel は順序保証があるため、このロールに対応する staging は必ずこの後に届く。
+      pendingStagingRef.current = false
+      pendingStagingEffectRef.current = ''
       // ロール結果受信時は必ずフィールドのダイスをクリア（再振り時に旧ダイスが残るのを防ぐ）
       dieConfigsRef.current = []
       setDieConfigs([])
@@ -2169,6 +2204,9 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
     unsubs.push(netMode.onLog((role, startedAt, entries) => {
       if (role === 'guest') { guestLogRef.current = { startedAt, entries }; setGuestLogGot(true) }
     }))
+
+    // 相手との接続断 → オーバーレイ表示（従来は無処理で無言の永久待ちになっていた）
+    unsubs.push(netMode.onPeerDisconnected(() => setPeerLost(true)))
 
     return () => unsubs.forEach(u => u())
   }, [netMode, resetForNextTurn, preparePendingRoll])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -2428,7 +2466,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           {/* 斬撃割れ用・半割れ破片2個常設 */}
           <SlashDieEffect
             ref={slashDieRef}
-            onHide={(id) => { dieRefsRef.current[id]?.current?.setHidden(true) }}
+            onHide={(id) => { dieRefById(id)?.setHidden(true) }}
           />
 
           {/* 雷ビジュアル A1: 発火点の稲妻ジグザグ＋着弾フラッシュ（key で発火ごとに再生成） */}
@@ -2449,9 +2487,8 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
               onFlash={onFlash}
               onCover={() => {
                 // ヨット演出: 白フラッシュで隠れている間に全ダイスを finalValue へ向ける
-                const refs = dieRefsRef.current
                 dieStatesRef.current = dieStatesRef.current.map(s => {
-                  refs[s.id]?.current?.orientTo(s.finalValue)
+                  dieRefById(s.id)?.orientTo(s.finalValue)
                   return { ...s, displayValue: s.finalValue }
                 })
               }}
@@ -2459,6 +2496,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
                 setYachtActive(false)
                 // DebugPanel からの単発テストはフェイズ・盤面に触らない（idle のまま戻す）
                 if (yachtTestRef.current) { yachtTestRef.current = false; return }
+                phaseRef.current = 'keep_select'
                 setPhase('keep_select')
                 setDieStates([...dieStatesRef.current])
               }}
@@ -2574,13 +2612,19 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
               </button>
             )}
             {/* 緊急復帰: 演出/集約の途中で固まって操作不能になったとき、現在のターンを idle に戻す。
-                スコア（シート）は保持されるので進行は失われない。最終手段。 */}
+                スコア（シート）は保持されるので進行は失われない。最終手段。
+                ※相手ターン中に押すと観戦表示が一時的にズレる（次のターン開始で回復）ため注記を添える。 */}
             <button
               style={{ ...logBtnStyle, background: '#5c2d2d', fontSize: 10, padding: '5px 8px' }}
               onClick={() => { SE.button(); resetForNextTurn() }}
             >
               操作不能時に押す（復帰）
             </button>
+            {netMode && (
+              <div style={{ fontSize: 8, color: '#8a7050', lineHeight: 1.4 }}>
+                ※自分のターンで押してください
+              </div>
+            )}
           </div>
         }
       />
@@ -2671,7 +2715,7 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           setSlashActive(true)
         }}
         onSlashDieTest={() => {
-          const dieRef = dieRefsRef.current[0]?.current
+          const dieRef = dieRefById(0)
           if (!dieRef) return
           const pose = dieRef.readPose()
           if (!pose) return
@@ -2928,6 +2972,38 @@ export function GameScene({ netMode }: { netMode?: NetMode } = {}) {
           >
             ログをダウンロード
           </button>
+        </div>
+      )}
+
+      {/* ── 切断オーバーレイ（最前面）: 相手との P2P 接続が切れた。従来は無処理＝無言の永久待ちだった ── */}
+      {peerLost && !gameOver && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 50,
+          background: 'rgba(0,0,0,0.85)',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 18,
+          color: '#fff', fontFamily: 'sans-serif',
+        }}>
+          <div style={{ fontSize: 26 }}>⚠ 相手との接続が切れました</div>
+          <div style={{ fontSize: 13, color: '#bbb' }}>
+            対戦を続けられません。タイトルに戻って再度対戦URLを共有してください。
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button
+              style={{ background: '#2d6a2d', color: '#fff', border: 'none', borderRadius: 8,
+                padding: '10px 32px', cursor: 'pointer', fontSize: 16, fontFamily: 'sans-serif' }}
+              onClick={() => { location.href = location.pathname }}
+            >
+              タイトルへ戻る
+            </button>
+            <button
+              style={{ background: '#1a3a5c', color: '#fff', border: 'none', borderRadius: 8,
+                padding: '10px 24px', cursor: 'pointer', fontSize: 14, fontFamily: 'sans-serif' }}
+              onClick={downloadLog}
+            >
+              ログをダウンロード
+            </button>
+          </div>
         </div>
       )}
     </div>

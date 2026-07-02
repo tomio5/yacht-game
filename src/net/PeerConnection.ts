@@ -40,6 +40,8 @@ export class PeerConnection {
     conn.on('open', () => this.onConnected())
     conn.on('data', (data) => this.onData(data))
     conn.on('close', () => this.onDisconnected())
+    // DataConnection 自体のエラー（ICE 断など close が来ないケース）も切断として扱う
+    conn.on('error', () => this.onDisconnected())
   }
 
   send(data: unknown) {

@@ -11,8 +11,7 @@
  */
 
 const DEFAULT_URL = '/sounds/maou_bgm_healing15.wav'
-// TODO: amazing_grace の音源は未配置（光の柱の指示書で配置・発火）。未配置時は無音のまま state だけ進む。
-const GRACE_URL   = '/sounds/Amazing Grace.wav'
+const GRACE_URL   = '/sounds/Amazing Grace.wav'   // 光の柱（ヨット）専用 BGM（配置済み）
 
 const BGM_BASE      = 0.020  // BGM ベース音量（実機調整可。これに masterVol を掛ける）
 const GRACE_MULT    = 25.0  // Amazing Grace 再生時の音量倍率

@@ -57,10 +57,7 @@ export function resumeAudio(): void {
   preloadFileSE()
 }
 
-export function isSEEnabled():  boolean { return seEnabled }
-export function isBGMEnabled(): boolean { return bgmEnabled }
-
-export function setSEEnabled(v: boolean): void { seEnabled = v }
+// （isSEEnabled/isBGMEnabled/setSEEnabled は未使用だったため削除。SE の有効判定は seEnabled を直接参照）
 
 export function setBGMEnabled(v: boolean): void {
   bgmEnabled = v

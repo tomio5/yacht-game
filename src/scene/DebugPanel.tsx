@@ -17,7 +17,8 @@ import type { DiceHitKind } from '../game/audio'
 import { getDisplayRank } from '../game/scoring'
 import type { DisplayRank } from '../game/types'
 
-const DEV_MODE = true
+// 表示制御は使用側の import.meta.env.DEV ゲート（GameScene）が主。ここでも DEV を見る（二重ガード）。
+const DEV_MODE = import.meta.env.DEV
 
 interface RollResult {
   displayValues: DieValue[]
